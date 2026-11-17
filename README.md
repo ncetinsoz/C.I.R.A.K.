@@ -7,7 +7,7 @@
 
 **Ç.I.R.A.K.** (*Çok Amaçlı İnceleme, Raporlama ve Ağ Keşif Cihazı*), Yönetim Bilişim Sistemleri (YBS) Yüksek Lisans Tezi kapsamında geliştirilmekte olan açık kaynaklı, taşınabilir ve endüstriyel standartlarda bir el terminali ağ analiz cihazıdır. 
 
-Fluke LinkRunner serisinin endüstriyel kararlılığını modern dokunmatik ergonomisiyle harmanlayan Ç.I.R.A.K., sistem ve ağ yöneticilerine kabinet başında saniyeler içinde L1-L7 katmanlarında tam teşhis, sahte DHCP tespiti ve ağ haritalama imkanı sunar.
+Bu tür ticari cihazların endüstriyel kararlılığını modern dokunmatik ergonomisiyle harmanlayan Ç.I.R.A.K., sistem ve ağ yöneticilerine sahada saniyeler içinde L1-L7 katmanlarında tam teşhis, sahte DHCP tespiti ve ağ haritalama imkanı sunar.
 
 ---
 
