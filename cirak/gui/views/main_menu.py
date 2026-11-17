@@ -64,8 +64,8 @@ class MainMenuView(QWidget):
         # 4. Hız Testi (Emerald)
         self.btn_speed = MenuCard(
             icon_name="speedometer",
-            title="Hız Testi (iPerf3)",
-            description="Throughput, Gecikme & Jitter",
+            title="Hız Testi",
+            description="İç Ağ (DEÜ) & Dış Ağ Throughput",
             accent_color="#10b981",
         )
         self.btn_speed.clicked.connect(lambda: self.navigate_requested.emit("speed"))

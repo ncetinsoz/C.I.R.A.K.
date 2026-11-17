@@ -30,8 +30,8 @@ def test_main_window_initialization(qapp):
     assert window.top_bar.height() == 40
     assert window.bottom_bar.height() == 42
 
-    # Check page stack
-    assert window.stack.count() == 5
+    # Check page stack (boot, main, autotest, discovery, rogue, speed)
+    assert window.stack.count() == 6
     assert window.stack.currentWidget() == window.main_menu
 
     # Test navigation
@@ -43,6 +43,9 @@ def test_main_window_initialization(qapp):
 
     window.show_page("rogue")
     assert window.stack.currentWidget() == window.rogue_view
+
+    window.show_page("speed")
+    assert window.stack.currentWidget() == window.speed_view
 
     window.show_page("main")
     assert window.stack.currentWidget() == window.main_menu

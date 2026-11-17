@@ -29,28 +29,29 @@ class ExternalTest(BaseTest):
         self.timeout_sec = timeout_sec
 
     def run(self) -> TestResult:
-        """Execute real HTTP probe."""
+        """Execute dual HTTP probe: Internal DEÜ Campus + External Google."""
         start_time = time.time()
 
         if self.simulate:
-            summary = "HTTP GET: 200 OK | Kayıp: %0 (4/4 Paket) | 11.4 ms"
+            summary = "DEÜ (İç): 200 OK (8.2 ms) | Google (Dış): 200 OK (14.5 ms)"
             return self._create_result(
                 status=TestStatus.PASSED,
                 start_time=start_time,
                 summary=summary,
                 details={
-                    "target_url": self.target_url,
                     "http_status": 200,
                     "latency_ms": 11.4,
                     "is_online": True,
+                    "internal_url": "http://www.deu.edu.tr",
+                    "internal_ok": True,
+                    "internal_ms": 8.2,
+                    "external_url": "http://www.google.com",
+                    "external_ok": True,
+                    "external_ms": 14.5,
                 }
             )
 
-        # Real HTTP probe
-        urls_to_try = [self.target_url, "http://www.google.com", config.ULAKBIM_EXTERNAL_URL]
-        last_error = ""
-
-        for url in urls_to_try:
+        def probe_http(url: str) -> tuple[bool, int, float, str]:
             try:
                 t0 = time.perf_counter()
                 req = urllib.request.Request(
@@ -59,28 +60,43 @@ class ExternalTest(BaseTest):
                 )
                 with urllib.request.urlopen(req, timeout=self.timeout_sec) as resp:
                     status_code = resp.getcode()
-                    latency_ms = (time.perf_counter() - t0) * 1000.0
-
-                if status_code in (200, 204, 301, 302):
-                    summary = f"HTTP GET: {status_code} OK | {latency_ms:.1f} ms"
-                    return self._create_result(
-                        status=TestStatus.PASSED,
-                        start_time=start_time,
-                        summary=summary,
-                        details={
-                            "target_url": url,
-                            "http_status": status_code,
-                            "latency_ms": round(latency_ms, 2),
-                            "is_online": True,
-                        }
-                    )
+                    lat_ms = (time.perf_counter() - t0) * 1000.0
+                    return True, status_code, lat_ms, ""
             except Exception as e:
-                last_error = str(e)
-                continue
+                return False, 0, 0.0, str(e)
+
+        deu_ok, deu_code, deu_ms, deu_err = probe_http("http://www.deu.edu.tr")
+        google_ok, google_code, google_ms, google_err = probe_http("http://www.google.com")
+
+        if deu_ok and google_ok:
+            status = TestStatus.PASSED
+            summary = f"DEÜ (İç): {deu_ms:.0f} ms | Google (Dış): {google_ms:.0f} ms"
+        elif deu_ok or google_ok:
+            status = TestStatus.WARNING
+            parts = []
+            if deu_ok:
+                parts.append(f"DEÜ: {deu_ms:.0f} ms")
+            else:
+                parts.append("DEÜ: Hata")
+            if google_ok:
+                parts.append(f"Google: {google_ms:.0f} ms")
+            else:
+                parts.append("Google: Hata")
+            summary = " | ".join(parts)
+        else:
+            status = TestStatus.FAILED
+            summary = f"Erişim Hatası (DEÜ: {deu_err[:20]}, Google: {google_err[:20]})"
 
         return self._create_result(
-            status=TestStatus.FAILED,
+            status=status,
             start_time=start_time,
-            summary=f"Dış ağa erişilemedi: {last_error}",
-            details={"error": last_error, "is_online": False}
+            summary=summary,
+            details={
+                "deu_ok": deu_ok,
+                "deu_status": deu_code,
+                "deu_ms": round(deu_ms, 1),
+                "google_ok": google_ok,
+                "google_status": google_code,
+                "google_ms": round(google_ms, 1),
+            }
         )

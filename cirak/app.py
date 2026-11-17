@@ -47,6 +47,25 @@ def run_terminal_diag(interface: Optional[str] = None, simulate: bool = False):
     print("=" * 70 + "\n")
 
 
+def capture_screen(output_path: str = "/tmp/cirak_screen.png") -> bool:
+    """Capture raw linuxfb /dev/fb0 framebuffer directly to PNG on Raspberry Pi."""
+    fb_path = "/dev/fb0"
+    if not os.path.exists(fb_path):
+        print(f"Hata: {fb_path} aygıtı bulunamadı.")
+        return False
+    try:
+        from PIL import Image
+        with open(fb_path, "rb") as f:
+            raw = f.read(config.SCREEN_WIDTH * config.SCREEN_HEIGHT * 4)
+        img = Image.frombytes("RGBA", (config.SCREEN_WIDTH, config.SCREEN_HEIGHT), raw, "raw", "BGRX")
+        img.save(output_path)
+        print(f"✓ 7' Ekran görüntüsü kaydedildi: {output_path}")
+        return True
+    except Exception as e:
+        print(f"Ekran görüntüsü alınamadı: {e}")
+        return False
+
+
 def parse_args():
     parser = argparse.ArgumentParser(
         description=f"Ç.I.R.A.K. El Terminali v{__version__} - Ağ Teşhis ve Keşif Cihazı"
@@ -55,6 +74,13 @@ def parse_args():
         "--diag",
         action="store_true",
         help="Arayüz açmadan terminalde L1-L7 donanım teşhisi koştur ve sonuç tablosunu yazdır",
+    )
+    parser.add_argument(
+        "--screenshot",
+        nargs="?",
+        const="/tmp/cirak_screen.png",
+        default=None,
+        help="7' dokunmatik ekranın (/dev/fb0) anlık ekran görüntüsünü PNG olarak kaydeder",
     )
     parser.add_argument(
         "--simulate",
@@ -87,6 +113,11 @@ def main():
     # CLI Diagnostic mode
     if args.diag:
         run_terminal_diag(simulate=args.simulate)
+        return
+
+    # CLI Framebuffer Screenshot mode
+    if args.screenshot:
+        capture_screen(args.screenshot)
         return
 
     # Touch and HiDPI settings
