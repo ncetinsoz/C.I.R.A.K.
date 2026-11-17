@@ -44,34 +44,35 @@ class BootScreen(QWidget):
         # Title
         title_label = QLabel("Ç.I.R.A.K.")
         title_font = QFont()
-        title_font.setPointSize(24)
+        title_font.setPointSize(26)
         title_font.setBold(True)
         title_label.setFont(title_font)
         title_label.setAlignment(Qt.AlignCenter)
-        title_label.setStyleSheet("color: #22d3ee; font-weight: 900; letter-spacing: 2px;")
-
-        # Subtitle
-        sub_label = QLabel("Çok Amaçlı İnceleme, Raporlama ve Ağ Keşif Cihazı")
-        sub_label.setAlignment(Qt.AlignCenter)
-        sub_label.setStyleSheet("color: #94a3b8; font-size: 11px;")
+        title_label.setStyleSheet("color: #22d3ee; font-weight: 900; letter-spacing: 3px;")
 
         # Progress bar
         self.progress_bar = QProgressBar()
         self.progress_bar.setFixedSize(360, 8)
         self.progress_bar.setTextVisible(False)
         self.progress_bar.setValue(0)
-
-        # Hardware loading status text
-        self.status_label = QLabel("Donanım sürücüleri başlatılıyor...")
-        self.status_label.setAlignment(Qt.AlignCenter)
-        self.status_label.setStyleSheet("color: #64748b; font-family: monospace; font-size: 11px;")
+        self.progress_bar.setStyleSheet("""
+            QProgressBar {
+                background-color: #1e293b;
+                border: 1px solid #334155;
+                border-radius: 4px;
+            }
+            QProgressBar::chunk {
+                background-color: #22d3ee;
+                border-radius: 3px;
+            }
+        """)
 
         layout.addStretch()
         layout.addWidget(self.logo_label, alignment=Qt.AlignCenter)
+        layout.addSpacing(8)
         layout.addWidget(title_label, alignment=Qt.AlignCenter)
-        layout.addWidget(sub_label, alignment=Qt.AlignCenter)
+        layout.addSpacing(20)
         layout.addWidget(self.progress_bar, alignment=Qt.AlignCenter)
-        layout.addWidget(self.status_label, alignment=Qt.AlignCenter)
         layout.addStretch()
 
     def update_logo(self):
@@ -81,21 +82,14 @@ class BootScreen(QWidget):
             self.logo_label.setPixmap(QPixmap(str(logo_path)))
 
     def start_boot(self):
-        """Begin progressive boot simulation."""
+        """Begin progressive boot sequence."""
         self._progress = 0
-        self.timer.start(50)  # ~1.5s total boot time
+        self.timer.start(40)  # ~1s smooth progression
 
     def _on_tick(self):
         self._progress += 4
-        self.progress_bar.setValue(self._progress)
+        self.progress_bar.setValue(min(self._progress, 100))
 
-        if self._progress == 20:
-            self.status_label.setText("Modüller yükleniyor: eth0 gigabit PHY hazır...")
-        elif self._progress == 50:
-            self.status_label.setText("LLDP / CDP paket yakalama motoru başlatıldı...")
-        elif self._progress == 80:
-            self.status_label.setText("Profil yüklendi: Kampus-Dinamik-DHCP...")
-        elif self._progress >= 100:
+        if self._progress >= 100:
             self.timer.stop()
-            self.status_label.setText("Arayüz hazır. Başlatılıyor...")
             self.boot_completed.emit()

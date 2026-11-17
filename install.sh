@@ -202,6 +202,13 @@ if [ -f "$CMDLINE_PATH" ]; then
     fi
 fi
 
+# Plymouth OS Açılış Görseli (Linux çekirdek açılışından itibaren Ç.I.R.A.K. logosu)
+SPLASH_IMG="${REPO_DIR}/assets/images/cirak_splash_800x480.png"
+if [ -f "$SPLASH_IMG" ] && [ -d "/usr/share/plymouth/themes/pix" ]; then
+    $SUDO_CMD cp "$SPLASH_IMG" "/usr/share/plymouth/themes/pix/splash.png" 2>/dev/null || true
+    echo -e "${GREEN}[OK]${NC} OS açılış görseli (Plymouth Splash) Ç.I.R.A.K. ile güncellendi."
+fi
+
 # 8. Otomatik Testlerin Çalıştırılması ve Doğrulama
 echo -e "\n${CYAN}==> 6/6: Otomatik Test Paketi (Pytest) Doğrulanıyor...${NC}"
 echo -e "${BLUE}[INFO]${NC} Backend ve UI duman testleri çalıştırılıyor..."
