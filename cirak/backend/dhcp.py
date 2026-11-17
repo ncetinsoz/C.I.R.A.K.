@@ -120,12 +120,16 @@ class DHCPTest(BaseTest):
     def discover_dhcp_servers(self) -> List[DHCPInfo]:
         """Broadcast DHCPDISCOVER and collect DHCPOFFER packets."""
         offers: List[DHCPInfo] = []
+        sock = None
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            # Essential for Linux RPi when dhcpcd/NetworkManager is running on UDP 68
+            sock.setsockopt(socket.SOL_SOCKET, getattr(socket, "SO_REUSEPORT", 15), 1)
+
             try:
-                # SO_BINDTODEVICE
+                # SO_BINDTODEVICE (requires CAP_NET_RAW)
                 sock.setsockopt(socket.SOL_SOCKET, 25, self.interface.encode())
             except Exception:
                 pass
@@ -152,10 +156,14 @@ class DHCPTest(BaseTest):
                         offers.append(parsed)
                 except socket.timeout:
                     break
-
-            sock.close()
         except Exception:
             pass
+        finally:
+            if sock:
+                try:
+                    sock.close()
+                except Exception:
+                    pass
 
         return offers
 

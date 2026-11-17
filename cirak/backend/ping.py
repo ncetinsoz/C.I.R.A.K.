@@ -79,10 +79,19 @@ class PingTest(BaseTest):
                 }
             )
 
-        # Run system ping
-        cmd = ["ping", "-c", str(self.count), "-W", str(int(self.timeout_sec)), gateway]
+        # Run system ping bound to target interface to prevent routing via wrong interface
+        cmd = ["ping"]
+        if self.interface and self.interface != "lo":
+            cmd += ["-I", self.interface]
+        cmd += ["-c", str(self.count), "-W", str(int(self.timeout_sec)), gateway]
+
         try:
             res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=10)
+            if res.returncode != 0 and "-I" in cmd:
+                # Fallback without -I in case capability or interface name restricts it
+                fallback_cmd = ["ping", "-c", str(self.count), "-W", str(int(self.timeout_sec)), gateway]
+                res = subprocess.run(fallback_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=10)
+
             output = res.stdout
 
             loss_match = re.search(r"(\d+(?:\.\d+)?)%\s*packet loss", output)

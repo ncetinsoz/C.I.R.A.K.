@@ -38,6 +38,12 @@ class ARPScanner:
         if self.simulate:
             return self._get_simulated_devices(on_host_found)
 
+        # 1. High-Performance Hardware Path: Try raw L2 arp-scan if binary is available
+        arp_devices = self._scan_with_arp_scan(subnet_prefix, on_host_found)
+        if arp_devices:
+            return arp_devices
+
+        # 2. Resilient Fallback: ThreadPool ping sweep
         devices: List[ARPDevice] = []
 
         def ping_host(host_num: int) -> Optional[ARPDevice]:
@@ -45,13 +51,12 @@ class ARPScanner:
                 return None
             ip = f"{subnet_prefix}{host_num}"
             try:
-                # Fast 1-packet ping with 200ms timeout
-                res = subprocess.run(
-                    ["ping", "-c", "1", "-W", "1", ip],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    timeout=1.5
-                )
+                cmd = ["ping"]
+                if self.interface and self.interface != "lo":
+                    cmd += ["-I", self.interface]
+                cmd += ["-c", "1", "-W", "1", ip]
+
+                res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=1.5)
                 if res.returncode == 0:
                     mac = self._lookup_mac_in_arp(ip)
                     vendor = self._guess_vendor(mac)
@@ -70,8 +75,41 @@ class ARPScanner:
                 if res:
                     devices.append(res)
 
-        if not devices and self.simulate:
-            return self._get_simulated_devices(on_host_found)
+        return devices
+
+    def _scan_with_arp_scan(
+        self,
+        subnet_prefix: str,
+        on_host_found: Optional[Callable[[ARPDevice], None]] = None
+    ) -> List[ARPDevice]:
+        """Execute ultra-fast L2 broadcast sweep via Linux arp-scan utility."""
+        import shutil
+        if not shutil.which("arp-scan"):
+            return []
+
+        target = f"{subnet_prefix}0/24"
+        cmd = ["arp-scan", "-q"]
+        if self.interface and self.interface != "lo":
+            cmd += ["-I", self.interface]
+        cmd += [target]
+
+        devices: List[ARPDevice] = []
+        try:
+            res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=5)
+            if res.returncode == 0 and res.stdout:
+                ip_pattern = re.compile(r"^(\d+\.\d+\.\d+\.\d+)\s+([0-9a-fA-F:]{17})\s+(.*)$")
+                for line in res.stdout.splitlines():
+                    match = ip_pattern.match(line.strip())
+                    if match:
+                        ip, mac, vendor = match.group(1), match.group(2).lower(), match.group(3).strip()
+                        if not vendor:
+                            vendor = self._guess_vendor(mac)
+                        dev = ARPDevice(ip=ip, mac=mac, vendor=vendor, response_time_ms=0.8)
+                        devices.append(dev)
+                        if on_host_found:
+                            on_host_found(dev)
+        except Exception:
+            pass
 
         return devices
 
