@@ -108,13 +108,18 @@ if getent group wireshark >/dev/null; then
     echo -e "${GREEN}[OK]${NC} '${ACTUAL_USER}' kullanıcısı 'wireshark' grubuna eklendi."
 fi
 
-# Donanım erişim grupları (Ekran, dokunmatik evdev ve ağ)
-for grp in video input render netdev; do
+## Donanım erişim grupları (Ekran, dokunmatik evdev, TTY konsol ve ağ)
+for grp in video input render netdev tty; do
     if getent group "$grp" >/dev/null; then
         $SUDO_CMD usermod -aG "$grp" "$ACTUAL_USER" || true
     fi
 done
-echo -e "${GREEN}[OK]${NC} Donanım erişim grupları (video, input, render, netdev) tanımlandı."
+echo -e "${GREEN}[OK]${NC} Donanım erişim grupları (video, input, render, netdev, tty) tanımlandı."
+
+# Eski boş /home/user/cirak klasörü varsa temizle (Python modül çakışmasını önle)
+if [ -d "${USER_HOME}/cirak" ] && [ "${USER_HOME}/cirak" != "${REPO_DIR}" ]; then
+    rm -rf "${USER_HOME}/cirak" 2>/dev/null || true
+fi
 
 # 4. Python Sanal Ortamının (.venv) Kurulması
 echo -e "\n${CYAN}==> 3/6: Python Sanal Ortamı (.venv) Hazırlanıyor...${NC}"
@@ -153,6 +158,9 @@ $SUDO_CMD bash -c "cat > ${LAUNCHER_SCRIPT}" <<EOF
 
 export REPO_DIR="${REPO_DIR}"
 export VENV_PYTHON="${VENV_DIR}/bin/python"
+export PYTHONPATH="${REPO_DIR}"
+
+cd "${REPO_DIR}"
 
 # Ekranda X11 veya Wayland yoksa doğrudan Raspberry Pi LinuxFB ve dokunmatik evdev kullan
 if [ -z "\$DISPLAY" ] && [ -z "\$WAYLAND_DISPLAY" ]; then
@@ -170,10 +178,15 @@ echo -e "${GREEN}[OK]${NC} '${LAUNCHER_SCRIPT}' oluşturuldu. Konsoldan doğruda
 SERVICE_FILE="/etc/systemd/system/cirak.service"
 echo -e "${BLUE}[INFO]${NC} Açılışta otomatik başlama için systemd servisi yapılandırılıyor..."
 
+# Ekranı çalan standart getty@tty1 konsol servisini devreden çıkar
+$SUDO_CMD systemctl stop getty@tty1.service 2>/dev/null || true
+$SUDO_CMD systemctl disable getty@tty1.service 2>/dev/null || true
+
 $SUDO_CMD bash -c "cat > ${SERVICE_FILE}" <<EOF
 [Unit]
 Description=Ç.I.R.A.K. El Terminali Dokunmatik UI Servisi
 After=network.target sound.target
+Conflicts=getty@tty1.service
 
 [Service]
 Type=simple
@@ -182,9 +195,16 @@ WorkingDirectory=${REPO_DIR}
 Environment=PYTHONUNBUFFERED=1
 Environment=QT_QPA_PLATFORM=linuxfb
 Environment=QT_QPA_GENERIC_PLUGINS=evdevtouch
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+StandardInput=tty
+StandardOutput=journal
+StandardError=journal
 ExecStart=${VENV_DIR}/bin/python -m cirak.app --fullscreen
 Restart=always
-RestartSec=3
+RestartSec=2
+
 [Install]
 WantedBy=multi-user.target
 EOF
