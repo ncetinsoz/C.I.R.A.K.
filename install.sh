@@ -74,7 +74,7 @@ SYSTEM_PACKAGES=(
     # Linux yetkilendirme (Least Privilege)
     libcap2-bin
 
-    # PySide6 / Qt6 DRM/KMS EGLFS grafik bağımlılıkları (X11'siz Lite OS için)
+    # PySide6 / Qt6 DRM/KMS ve LinuxFB grafik ve font bağımlılıkları (X11'siz Lite OS için)
     libgl1
     libgl1-mesa-dri
     libglx-mesa0
@@ -86,6 +86,9 @@ SYSTEM_PACKAGES=(
     libinput10
     libudev1
     libglib2.0-0
+    fonts-noto-color-emoji
+    fonts-dejavu-core
+    fonts-freefont-ttf
 )
 
 echo -e "${BLUE}[INFO]${NC} Paketler yükleniyor: ${SYSTEM_PACKAGES[*]}"
@@ -151,10 +154,10 @@ $SUDO_CMD bash -c "cat > ${LAUNCHER_SCRIPT}" <<EOF
 export REPO_DIR="${REPO_DIR}"
 export VENV_PYTHON="${VENV_DIR}/bin/python"
 
-# Ekranda X11 veya Wayland yoksa doğrudan Raspberry Pi EGLFS kullan
+# Ekranda X11 veya Wayland yoksa doğrudan Raspberry Pi LinuxFB ve dokunmatik evdev kullan
 if [ -z "\$DISPLAY" ] && [ -z "\$WAYLAND_DISPLAY" ]; then
-    export QT_QPA_PLATFORM=eglfs
-    export QT_QPA_EGLFS_ALWAYS_SET_MODE=1
+    export QT_QPA_PLATFORM=linuxfb
+    export QT_QPA_GENERIC_PLUGINS=evdevtouch
 fi
 
 exec "\$VENV_PYTHON" -m cirak.app "\$@"
@@ -177,12 +180,11 @@ Type=simple
 User=${ACTUAL_USER}
 WorkingDirectory=${REPO_DIR}
 Environment=PYTHONUNBUFFERED=1
-Environment=QT_QPA_PLATFORM=eglfs
-Environment=QT_QPA_EGLFS_ALWAYS_SET_MODE=1
+Environment=QT_QPA_PLATFORM=linuxfb
+Environment=QT_QPA_GENERIC_PLUGINS=evdevtouch
 ExecStart=${VENV_DIR}/bin/python -m cirak.app --fullscreen
 Restart=always
 RestartSec=3
-
 [Install]
 WantedBy=multi-user.target
 EOF

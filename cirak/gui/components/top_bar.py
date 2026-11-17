@@ -85,7 +85,7 @@ class TopBar(QFrame):
         self.clock_label.setStyleSheet("color: #94a3b8; font-family: monospace; font-size: 11px; font-weight: bold;")
 
         # Theme toggle button
-        self.theme_btn = QPushButton("🌓")
+        self.theme_btn = QPushButton("◐")
         self.theme_btn.setFixedSize(32, 28)
         self.theme_btn.setToolTip("Tema Değiştir (Aydınlık / Karanlık)")
         self.theme_btn.clicked.connect(self._on_theme_toggle_clicked)
