@@ -21,8 +21,8 @@ def parse_args():
     parser.add_argument(
         "--simulate",
         action="store_true",
-        default=True,
-        help="Ağ donanımı çağrılarını simülasyon modunda çalıştır (Geliştirme/Laboratuvar ortamı)",
+        default=False,
+        help="Ağ donanımı çağrılarını simülasyon modunda çalıştır (Yalnızca laboratuvar/test ortamı için)",
     )
     parser.add_argument(
         "--fullscreen",

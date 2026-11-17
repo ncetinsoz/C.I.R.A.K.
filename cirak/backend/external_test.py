@@ -1,6 +1,6 @@
 """
-Layer 7: External Network & ULAKBİM / Web Connectivity test.
-Verifies WAN exit, NAT, firewall policy, and HTTP reachability (HTTP 200 OK).
+Layer 7: External Network & Internet Connectivity test.
+Verifies WAN exit, NAT, firewall policy, and HTTP reachability (HTTP 200/204 OK).
 """
 
 import time
@@ -8,26 +8,28 @@ import urllib.request
 import urllib.error
 from typing import Optional
 from cirak.backend.base import BaseTest
+from cirak.backend.network_detector import NetworkDetector
 from cirak.core.models import TestResult, TestStatus, ExternalResult
 from cirak import config
 
 
 class ExternalTest(BaseTest):
-    """Diagnoses institutional WAN and national academic network (ULAKBİM) reachability."""
+    """Diagnoses WAN internet reachability and national academic network (ULAKBİM)."""
 
     def __init__(
         self,
         target_url: str = config.DEFAULT_EXTERNAL_URL,
-        interface: str = "eth0",
-        timeout_sec: float = 3.0,
+        interface: Optional[str] = None,
+        timeout_sec: float = 2.5,
         simulate: bool = False,
     ):
-        super().__init__(name="6. Dış Ağ (ULAKBIM)", interface=interface, simulate=simulate)
+        iface = interface or NetworkDetector.get_active_interface()
+        super().__init__(name="6. Dış Ağ (ULAKBIM)", interface=iface, simulate=simulate)
         self.target_url = target_url
         self.timeout_sec = timeout_sec
 
     def run(self) -> TestResult:
-        """Execute HTTP probe."""
+        """Execute real HTTP probe."""
         start_time = time.time()
 
         if self.simulate:
@@ -40,61 +42,45 @@ class ExternalTest(BaseTest):
                     "target_url": self.target_url,
                     "http_status": 200,
                     "latency_ms": 11.4,
-                    "packet_loss_pct": 0.0,
                     "is_online": True,
                 }
             )
 
-        try:
-            req = urllib.request.Request(
-                self.target_url,
-                headers={"User-Agent": "CIRAK-Handheld-Tester/1.0"}
-            )
-            t_req = time.time()
-            with urllib.request.urlopen(req, timeout=self.timeout_sec) as response:
-                status_code = response.getcode()
-                latency_ms = (time.time() - t_req) * 1000.0
+        # Real HTTP probe
+        urls_to_try = [self.target_url, "http://www.google.com", config.ULAKBIM_EXTERNAL_URL]
+        last_error = ""
 
-            if status_code in (200, 301, 302):
-                summary = f"HTTP GET: {status_code} OK | {latency_ms:.1f} ms"
-                return self._create_result(
-                    status=TestStatus.PASSED,
-                    start_time=start_time,
-                    summary=summary,
-                    details={
-                        "target_url": self.target_url,
-                        "http_status": status_code,
-                        "latency_ms": round(latency_ms, 2),
-                        "packet_loss_pct": 0.0,
-                        "is_online": True,
-                    }
+        for url in urls_to_try:
+            try:
+                t0 = time.perf_counter()
+                req = urllib.request.Request(
+                    url,
+                    headers={"User-Agent": "CIRAK-Handheld-Tester/1.0"}
                 )
-            else:
-                return self._create_result(
-                    status=TestStatus.WARNING,
-                    start_time=start_time,
-                    summary=f"HTTP Durum Kodu: {status_code}",
-                    details={"target_url": self.target_url, "http_status": status_code}
-                )
-        except urllib.error.HTTPError as e:
-            return self._create_result(
-                status=TestStatus.WARNING,
-                start_time=start_time,
-                summary=f"HTTP Hata Kodu: {e.code}",
-                details={"target_url": self.target_url, "http_status": e.code}
-            )
-        except Exception as e:
-            # Fallback for dev / isolated environments
-            summary = "HTTP GET: 200 OK | Kayıp: %0 (4/4 Paket) | 11.4 ms"
-            return self._create_result(
-                status=TestStatus.PASSED,
-                start_time=start_time,
-                summary=summary,
-                details={
-                    "target_url": self.target_url,
-                    "http_status": 200,
-                    "latency_ms": 11.4,
-                    "packet_loss_pct": 0.0,
-                    "is_online": True,
-                }
-            )
+                with urllib.request.urlopen(req, timeout=self.timeout_sec) as resp:
+                    status_code = resp.getcode()
+                    latency_ms = (time.perf_counter() - t0) * 1000.0
+
+                if status_code in (200, 204, 301, 302):
+                    summary = f"HTTP GET: {status_code} OK | {latency_ms:.1f} ms"
+                    return self._create_result(
+                        status=TestStatus.PASSED,
+                        start_time=start_time,
+                        summary=summary,
+                        details={
+                            "target_url": url,
+                            "http_status": status_code,
+                            "latency_ms": round(latency_ms, 2),
+                            "is_online": True,
+                        }
+                    )
+            except Exception as e:
+                last_error = str(e)
+                continue
+
+        return self._create_result(
+            status=TestStatus.FAILED,
+            start_time=start_time,
+            summary=f"Dış ağa erişilemedi: {last_error}",
+            details={"error": last_error, "is_online": False}
+        )

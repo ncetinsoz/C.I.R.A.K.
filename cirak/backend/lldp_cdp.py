@@ -8,50 +8,66 @@ import struct
 import time
 from typing import Optional, Dict, Any
 from cirak.backend.base import BaseTest
+from cirak.backend.network_detector import NetworkDetector
 from cirak.core.models import TestResult, TestStatus, LLDPInfo
 
 
 class LLDPCdpTest(BaseTest):
-    """Listens for LLDP and CDP broadcast frames on the interface."""
+    """Listens for LLDP and CDP broadcast frames or queries system lldpd daemon."""
 
-    def __init__(self, interface: str = "eth0", timeout_sec: float = 3.0, simulate: bool = False):
-        super().__init__(name="2. Switch & Port (LLDP)", interface=interface, simulate=simulate)
+    def __init__(self, interface: Optional[str] = None, timeout_sec: float = 2.5, simulate: bool = False):
+        iface = interface or NetworkDetector.get_active_interface()
+        super().__init__(name="2. Switch & Port (LLDP)", interface=iface, simulate=simulate)
         self.timeout_sec = timeout_sec
 
     def run(self) -> TestResult:
         """Run L2 discovery."""
         start_time = time.time()
+
+        if self.simulate:
+            info = self._get_simulated_info()
+            summary = f"Switch: {info.system_name} | Port: {info.port_id} | VLAN: {info.vlan_id or 'Untagged'}"
+            return self._create_result(
+                status=TestStatus.PASSED,
+                start_time=start_time,
+                summary=summary,
+                details=info.__dict__
+            )
+
+        # 1. Query lldpd daemon directly (fastest, 0 packet loss)
+        daemon_data = NetworkDetector.get_lldp_from_daemon(self.interface)
+        if daemon_data and daemon_data.get("system_name"):
+            summary = (
+                f"Switch: {daemon_data['system_name']} | Port: {daemon_data['port_id']} "
+                f"| VLAN: {daemon_data.get('vlan_id') or 'Untagged'}"
+            )
+            return self._create_result(
+                status=TestStatus.PASSED,
+                start_time=start_time,
+                summary=summary,
+                details=daemon_data
+            )
+
+        # 2. Try raw socket sniffing
         info = self.capture_neighbor_info()
+        if info and info.system_name:
+            summary = f"Switch: {info.system_name} | Port: {info.port_id} | VLAN: {info.vlan_id or 'Untagged'}"
+            return self._create_result(
+                status=TestStatus.PASSED,
+                start_time=start_time,
+                summary=summary,
+                details=info.__dict__
+            )
 
-        if not info or not info.system_name:
-            if self.simulate:
-                info = self._get_simulated_info()
-            else:
-                return self._create_result(
-                    status=TestStatus.WARNING,
-                    start_time=start_time,
-                    summary="LLDP/CDP yanıtı alınamadı (Zaman aşımı)",
-                    details={"error": "No LLDP/CDP frames received within timeout"}
-                )
-
-        summary = f"Switch: {info.system_name} | Port: {info.port_id} | VLAN: {info.vlan_id or 'Untagged'}"
+        # 3. No LLDP packet received
         return self._create_result(
-            status=TestStatus.PASSED,
+            status=TestStatus.WARNING,
             start_time=start_time,
-            summary=summary,
-            details={
-                "system_name": info.system_name,
-                "port_id": info.port_id,
-                "vlan_id": info.vlan_id,
-                "management_ip": info.management_ip,
-                "chassis_id": info.chassis_id,
-                "protocol": info.protocol,
-                "ttl": info.ttl,
-            }
+            summary="LLDP/CDP Yanıtı Yok (Yönetimsiz Switch veya Bekleniyor)",
+            details={"error": "No LLDP frames detected on interface"}
         )
 
     def _get_simulated_info(self) -> LLDPInfo:
-        """Provide standard laboratory switch discovery result."""
         return LLDPInfo(
             chassis_id="00:1e:bd:8c:12:00",
             system_name="Catalyst-9300",
@@ -65,10 +81,6 @@ class LLDPCdpTest(BaseTest):
 
     def capture_neighbor_info(self) -> Optional[LLDPInfo]:
         """Sniff for LLDP or CDP frames on raw socket."""
-        if self.simulate:
-            return self._get_simulated_info()
-
-        # Try raw socket sniff (requires AF_PACKET & root)
         try:
             ETH_P_ALL = 3
             ETH_P_LLDP = 0x88cc
@@ -85,7 +97,6 @@ class LLDPCdpTest(BaseTest):
                 except socket.timeout:
                     break
 
-                # Check EtherType
                 if len(packet) >= 14:
                     eth_proto = struct.unpack("!H", packet[12:14])[0]
                     if eth_proto == ETH_P_LLDP:
@@ -93,7 +104,6 @@ class LLDPCdpTest(BaseTest):
                         if info:
                             sock.close()
                             return info
-                    # Check CDP (SNAP 0x01-00-0c-cc-cc-cc)
                     elif packet[0:6] == b"\x01\x00\x0c\xcc\xcc\xcc":
                         info = self.parse_cdp_frame(packet[14:])
                         if info:
@@ -101,9 +111,6 @@ class LLDPCdpTest(BaseTest):
                             return info
 
             sock.close()
-        except PermissionError:
-            # Non-root dev environment
-            return self._get_simulated_info()
         except Exception:
             pass
 
@@ -128,22 +135,21 @@ class LLDPCdpTest(BaseTest):
                 val = payload[offset:offset + tlv_len]
                 offset += tlv_len
 
-                if tlv_type == 0:  # End of LLDPDU
+                if tlv_type == 0:
                     break
-                elif tlv_type == 1:  # Chassis ID
+                elif tlv_type == 1:
                     info.chassis_id = self._format_chassis_id(val)
-                elif tlv_type == 2:  # Port ID
+                elif tlv_type == 2:
                     info.port_id = self._format_port_id(val)
-                elif tlv_type == 3:  # TTL
-                    if len(val) >= 2:
-                        info.ttl = struct.unpack("!H", val[:2])[0]
-                elif tlv_type == 4:  # Port Description
+                elif tlv_type == 3 and len(val) >= 2:
+                    info.ttl = struct.unpack("!H", val[:2])[0]
+                elif tlv_type == 4:
                     info.port_description = val.decode("utf-8", errors="ignore").strip()
-                elif tlv_type == 5:  # System Name
+                elif tlv_type == 5:
                     info.system_name = val.decode("utf-8", errors="ignore").strip()
-                elif tlv_type == 8:  # Management Address
+                elif tlv_type == 8:
                     info.management_ip = self._format_mgmt_address(val)
-                elif tlv_type == 127:  # Org Specific (802.1 VLAN)
+                elif tlv_type == 127:
                     vlan = self._parse_org_vlan(val)
                     if vlan is not None:
                         info.vlan_id = vlan
@@ -156,10 +162,8 @@ class LLDPCdpTest(BaseTest):
         """Parse Cisco CDP payload."""
         info = LLDPInfo(protocol="CDP")
         try:
-            # Skip LLC header (typically 8 bytes)
             if len(payload) > 8:
                 payload = payload[8:]
-            # CDP header: Version (1), TTL (1), Checksum (2)
             if len(payload) < 4:
                 return None
             info.ttl = payload[1]
@@ -174,13 +178,12 @@ class LLDPCdpTest(BaseTest):
                 val = payload[offset:offset + val_len]
                 offset += val_len
 
-                if field_type == 0x0001:  # Device ID
+                if field_type == 0x0001:
                     info.system_name = val.decode("utf-8", errors="ignore").strip()
-                elif field_type == 0x0003:  # Port ID
+                elif field_type == 0x0003:
                     info.port_id = val.decode("utf-8", errors="ignore").strip()
-                elif field_type == 0x000a:  # Native VLAN
-                    if len(val) >= 2:
-                        info.vlan_id = struct.unpack("!H", val[:2])[0]
+                elif field_type == 0x000a and len(val) >= 2:
+                    info.vlan_id = struct.unpack("!H", val[:2])[0]
 
             return info if info.system_name else None
         except Exception:
@@ -189,11 +192,9 @@ class LLDPCdpTest(BaseTest):
     def _format_chassis_id(self, val: bytes) -> str:
         if not val:
             return ""
-        subtype = val[0]
-        data = val[1:]
-        if subtype == 4 and len(data) == 6:  # MAC address
-            return ":".join(f"{b:02x}" for b in data)
-        return data.decode("utf-8", errors="ignore").strip()
+        if val[0] == 4 and len(val[1:]) == 6:
+            return ":".join(f"{b:02x}" for b in val[1:])
+        return val[1:].decode("utf-8", errors="ignore").strip()
 
     def _format_port_id(self, val: bytes) -> str:
         if not val:
@@ -201,15 +202,11 @@ class LLDPCdpTest(BaseTest):
         return val[1:].decode("utf-8", errors="ignore").strip()
 
     def _format_mgmt_address(self, val: bytes) -> str:
-        if len(val) >= 5:
-            # Check IPv4 (length 5, subtype 1)
-            addr_len = val[0]
-            if addr_len == 5 and val[1] == 1:
-                return socket.inet_ntoa(val[2:6])
+        if len(val) >= 5 and val[0] == 5 and val[1] == 1:
+            return socket.inet_ntoa(val[2:6])
         return ""
 
     def _parse_org_vlan(self, val: bytes) -> Optional[int]:
-        # IEEE 802.1 OUI is 00-80-c2, Subtype 1 (Port VLAN ID)
         if len(val) >= 6 and val[:3] == b"\x00\x80\xc2" and val[3] == 1:
             return struct.unpack("!H", val[4:6])[0]
         return None

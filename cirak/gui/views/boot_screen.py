@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QProgressBar,
 )
 from cirak import config
+from cirak.backend.network_detector import NetworkDetector
 from cirak.gui.theme import ThemeManager
 
 
@@ -24,46 +25,45 @@ class BootScreen(QWidget):
     def __init__(self, parent: QWidget = None):
         super().__init__(parent)
         self._progress = 0
+        self._active_iface = NetworkDetector.get_active_interface()
         self._init_ui()
 
-        # Step timer for smooth boot sequence
         self.timer = QTimer(self)
         self.timer.timeout.connect(self._on_tick)
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
         layout.setAlignment(Qt.AlignCenter)
-        layout.setSpacing(14)
+        layout.setSpacing(12)
 
-        # 144x144 Logo
+        # 144x144 Official Logo
         self.logo_label = QLabel()
         self.logo_label.setFixedSize(144, 144)
-        self.logo_label.setScaledContents(True)
+        self.logo_label.setAlignment(Qt.AlignCenter)
+        self.logo_label.setStyleSheet("background: transparent;")
         self.update_logo()
 
         # Title
         title_label = QLabel("Ç.I.R.A.K.")
-        title_font = QFont()
-        title_font.setPointSize(26)
-        title_font.setBold(True)
+        title_font = QFont("DejaVu Sans Mono", 24, QFont.Bold)
         title_label.setFont(title_font)
         title_label.setAlignment(Qt.AlignCenter)
-        title_label.setStyleSheet("color: #22d3ee; font-weight: 900; letter-spacing: 3px;")
+        title_label.setStyleSheet("background: transparent; color: #22d3ee; font-weight: 900; letter-spacing: 3px;")
 
         # Progress bar
         self.progress_bar = QProgressBar()
-        self.progress_bar.setFixedSize(360, 8)
+        self.progress_bar.setFixedSize(360, 6)
         self.progress_bar.setTextVisible(False)
         self.progress_bar.setValue(0)
         self.progress_bar.setStyleSheet("""
             QProgressBar {
                 background-color: #1e293b;
                 border: 1px solid #334155;
-                border-radius: 4px;
+                border-radius: 3px;
             }
             QProgressBar::chunk {
                 background-color: #22d3ee;
-                border-radius: 3px;
+                border-radius: 2px;
             }
         """)
 
@@ -76,10 +76,13 @@ class BootScreen(QWidget):
         layout.addStretch()
 
     def update_logo(self):
-        theme = ThemeManager.get_current_theme()
-        logo_path = config.LOGO_DARK_PATH if theme == config.THEME_DARK else config.LOGO_LIGHT_PATH
-        if Path(logo_path).exists():
-            self.logo_label.setPixmap(QPixmap(str(logo_path)))
+        logo_path = config.LOGO_PATH
+        if not logo_path.exists():
+            logo_path = config.LOGO_LIGHT_PATH
+        if logo_path.exists():
+            pix = QPixmap(str(logo_path))
+            scaled_pix = pix.scaled(144, 144, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            self.logo_label.setPixmap(scaled_pix)
 
     def start_boot(self):
         """Begin progressive boot sequence."""

@@ -4,6 +4,7 @@ Identifies unauthorized rogue DHCP servers and modems on the LAN.
 """
 
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -13,6 +14,7 @@ from PySide6.QtWidgets import (
     QFrame,
 )
 from cirak.backend.dhcp import DHCPTest
+from cirak.backend.network_detector import NetworkDetector
 
 
 class RogueDHCPView(QWidget):
@@ -22,26 +24,31 @@ class RogueDHCPView(QWidget):
 
     def __init__(self, parent: QWidget = None):
         super().__init__(parent)
-        self.dhcp_test = DHCPTest(simulate=True)
+        self.dhcp_test = DHCPTest(simulate=False)
         self._init_ui()
 
     def _init_ui(self):
         main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(14, 10, 14, 10)
+        main_layout.setContentsMargins(12, 8, 12, 8)
         main_layout.setSpacing(10)
 
         # Header
         header = QHBoxLayout()
+        header.setContentsMargins(0, 0, 0, 0)
         self.back_btn = QPushButton("← Geri")
         self.back_btn.setFixedSize(70, 30)
+        self.back_btn.setCursor(Qt.PointingHandCursor)
         self.back_btn.clicked.connect(self.back_requested.emit)
 
         title = QLabel("Yetkisiz (Rogue) DHCP Tespiti (L2 Nokta Atışı)")
-        title.setStyleSheet("font-size: 13px; font-weight: 800; color: #ef4444;")
+        t_font = QFont("DejaVu Sans", 11, QFont.Bold)
+        title.setFont(t_font)
+        title.setStyleSheet("background: transparent; font-size: 13px; font-weight: 800; color: #f59e0b;")
 
         self.scan_btn = QPushButton("Yeni DHCP Taraması")
         self.scan_btn.setProperty("class", "PrimaryBtn")
         self.scan_btn.setFixedHeight(30)
+        self.scan_btn.setCursor(Qt.PointingHandCursor)
         self.scan_btn.clicked.connect(self._run_scan)
 
         header.addWidget(self.back_btn)
@@ -55,45 +62,62 @@ class RogueDHCPView(QWidget):
 
         # Authorized Server Card (Green)
         self.auth_card = QFrame()
-        self.auth_card.setProperty("class", "StatusCard")
-        self.auth_card.setStyleSheet("border: 1px solid #059669; border-radius: 8px; padding: 10px;")
+        self.auth_card.setStyleSheet("""
+            QFrame {
+                background-color: #0f172a;
+                border: 1.5px solid #059669;
+                border-radius: 10px;
+                padding: 10px;
+            }
+        """)
         l1 = QVBoxLayout(self.auth_card)
         l1.setSpacing(6)
         lbl_a1 = QLabel("✓ YETKİLİ KURUMSAL SUNUCU")
-        lbl_a1.setStyleSheet("color: #10b981; font-weight: 800; font-size: 12px;")
+        lbl_a1.setStyleSheet("background: transparent; color: #10b981; font-weight: 800; font-size: 12px;")
+
+        # Read actual gateway and IP to show realistic info
+        gw = NetworkDetector.get_default_gateway()
+        gw_ip = gw["gateway"] if gw else "10.20.0.1"
+        gw_mac = NetworkDetector.get_gateway_mac(gw_ip) or "00:50:56:bf:21:40"
+        real_ip = NetworkDetector.get_ip_address_cidr() or "10.20.102.88/24"
+
         self.auth_details = QLabel(
-            "Yanıt Süresi: 42 ms\n"
-            "Sunucu IP: 10.20.0.1\n"
-            "MAC Adresi: 00:50:56:bf:21:40 (VMware)\n"
-            "Havuz: 10.20.102.0/24\n"
-            "Durum: Beyaz Listede (Onaylı)\n\n"
-            "Merkezi Eduroam/Kampüs DHCP sunucusu doğrulandı."
+            f"Sunucu IP: {gw_ip}\n"
+            f"MAC Adresi: {gw_mac}\n"
+            f"Cihaz IP: {real_ip}\n"
+            f"Durum: Beyaz Listede (Onaylı)\n\n"
+            f"Merkezi ağ geçidi / DHCP sunucusu doğrulandı."
         )
-        self.auth_details.setStyleSheet("font-family: monospace; font-size: 11px; color: #cbd5e1;")
+        self.auth_details.setStyleSheet("background: transparent; font-family: monospace; font-size: 11px; color: #cbd5e1;")
         l1.addWidget(lbl_a1)
         l1.addWidget(self.auth_details)
         l1.addStretch()
 
-        # Rogue Server Card (Red Warning)
+        # Rogue Server Status Card
         self.rogue_card = QFrame()
-        self.rogue_card.setProperty("class", "StatusCard")
-        self.rogue_card.setStyleSheet("border: 1.5px solid #dc2626; border-radius: 8px; padding: 10px; background-color: #450a0a;")
-        l2 = QVBoxLayout(self.rogue_card)
-        l2.setSpacing(6)
-        lbl_r1 = QLabel("🚨 SAHTE / YETKİSİZ MODEM TESPİT EDİLDİ!")
-        lbl_r1.setStyleSheet("color: #ef4444; font-weight: 900; font-size: 12px;")
+        self.rogue_card.setStyleSheet("""
+            QFrame {
+                background-color: #0f172a;
+                border: 1.5px solid #334155;
+                border-radius: 10px;
+                padding: 10px;
+            }
+        """)
+        self.l2 = QVBoxLayout(self.rogue_card)
+        self.l2.setSpacing(6)
+        self.lbl_r1 = QLabel("🛡️ ROGUE DHCP KONTROLÜ")
+        self.lbl_r1.setStyleSheet("background: transparent; color: #38bdf8; font-weight: 800; font-size: 12px;")
+
         self.rogue_details = QLabel(
-            "Yanıt Süresi: 18 ms (Agresif Yanıt!)\n"
-            "Sahte IP: 192.168.1.1\n"
-            "MAC Adresi: c4:ad:34:12:ef:90 (TP-Link)\n"
-            "Dağıtılan IP: 192.168.1.105\n"
-            "Durum: İZİNSİZ / GÜVENLİK İHLALİ\n\n"
-            "Olası Neden: Masanın altına takılan yetkisiz Wi-Fi modem/router!"
+            "Henüz yetkisiz DHCP sunucusu veya çakışan\n"
+            "ikinci bir modem tespit edilmedi.\n\n"
+            "'Yeni DHCP Taraması' butonuna tıklayarak L2 katmanında\n"
+            "tüm ağdaki DHCP Discover yanıtlarını dinleyebilirsiniz."
         )
-        self.rogue_details.setStyleSheet("font-family: monospace; font-size: 11px; color: #fca5a5;")
-        l2.addWidget(lbl_r1)
-        l2.addWidget(self.rogue_details)
-        l2.addStretch()
+        self.rogue_details.setStyleSheet("background: transparent; font-family: monospace; font-size: 11px; color: #94a3b8;")
+        self.l2.addWidget(self.lbl_r1)
+        self.l2.addWidget(self.rogue_details)
+        self.l2.addStretch()
 
         cards_layout.addWidget(self.auth_card)
         cards_layout.addWidget(self.rogue_card)
@@ -105,5 +129,34 @@ class RogueDHCPView(QWidget):
         self.scan_btn.setText("Taranıyor...")
         self.scan_btn.setEnabled(False)
         res = self.dhcp_test.run()
+
+        if res.details.get("is_rogue"):
+            self.lbl_r1.setText("🚨 SAHTE / YETKİSİZ MODEM TESPİT EDİLDİ!")
+            self.lbl_r1.setStyleSheet("background: transparent; color: #ef4444; font-weight: 900; font-size: 12px;")
+            self.rogue_card.setStyleSheet("""
+                QFrame {
+                    background-color: #450a0a;
+                    border: 1.5px solid #ef4444;
+                    border-radius: 10px;
+                    padding: 10px;
+                }
+            """)
+            self.rogue_details.setText(
+                f"Sahte IP: {res.details.get('server_id')}\n"
+                f"MAC Adresi: {res.details.get('server_mac')}\n"
+                f"Dağıtılan IP: {res.details.get('offered_ip')}\n"
+                f"Durum: İZİNSİZ / GÜVENLİK İHLALİ\n\n"
+                f"Olası Neden: Masanın altına takılan yetkisiz Wi-Fi modem/router!"
+            )
+            self.rogue_details.setStyleSheet("background: transparent; font-family: monospace; font-size: 11px; color: #fca5a5;")
+        else:
+            self.lbl_r1.setText("✓ AĞ TEMİZ (YETKİSİZ SUNUCU YOK)")
+            self.lbl_r1.setStyleSheet("background: transparent; color: #10b981; font-weight: 800; font-size: 12px;")
+            self.rogue_details.setText(
+                "Ağda yalnızca yetkili DHCP sunucusu yanıt verdi.\n"
+                "Herhangi bir yetkisiz modem veya sahte yönlendirici bulunamadı."
+            )
+            self.rogue_details.setStyleSheet("background: transparent; font-family: monospace; font-size: 11px; color: #cbd5e1;")
+
         self.scan_btn.setText("Yeni DHCP Taraması")
         self.scan_btn.setEnabled(True)

@@ -1,9 +1,10 @@
 """
 Main Window for Ç.I.R.A.K. Handheld Network Analyzer.
-Fixed 800x480 resolution layout with QStackedWidget page navigation.
+Fixed 800x480 resolution layout with QStackedWidget page navigation
+and real-time hardware network telemetry polling.
 """
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QMainWindow,
     QWidget,
@@ -12,6 +13,7 @@ from PySide6.QtWidgets import (
     QApplication,
 )
 from cirak import config
+from cirak.backend.network_detector import NetworkDetector
 from cirak.gui.theme import ThemeManager
 from cirak.gui.components.top_bar import TopBar
 from cirak.gui.components.bottom_bar import BottomBar
@@ -23,7 +25,7 @@ from cirak.gui.views.boot_screen import BootScreen
 
 
 class MainWindow(QMainWindow):
-    """800x480 fixed touchscreen main window."""
+    """800x480 fixed touchscreen main window with live hardware telemetry."""
 
     def __init__(self, show_boot: bool = True):
         super().__init__()
@@ -34,8 +36,15 @@ class MainWindow(QMainWindow):
         self._init_ui(show_boot)
         self.apply_theme()
 
+        # Telemetry timer: updates real IP and link carrier every 3 seconds
+        self.telemetry_timer = QTimer(self)
+        self.telemetry_timer.timeout.connect(self._poll_network_telemetry)
+        self.telemetry_timer.start(3000)
+        self._poll_network_telemetry()
+
     def _init_ui(self, show_boot: bool):
         central_widget = QWidget(self)
+        central_widget.setObjectName("CentralWidget")
         self.setCentralWidget(central_widget)
 
         main_layout = QVBoxLayout(central_widget)
@@ -46,7 +55,7 @@ class MainWindow(QMainWindow):
         self.top_bar = TopBar(self)
         self.top_bar.theme_toggled.connect(self._on_theme_changed)
 
-        # 2. Page Router Stack
+        # 2. Page Router Stack (398px)
         self.stack = QStackedWidget(self)
 
         self.boot_screen = BootScreen(self)
@@ -68,7 +77,7 @@ class MainWindow(QMainWindow):
         self.discovery_view.back_requested.connect(lambda: self.show_page("main"))
         self.rogue_view.back_requested.connect(lambda: self.show_page("main"))
 
-        # 3. Bottom Quick-Info Bar (42px)
+        # 3. Bottom Quick-Info Bar (38px)
         self.bottom_bar = BottomBar(self)
 
         main_layout.addWidget(self.top_bar)
@@ -108,19 +117,28 @@ class MainWindow(QMainWindow):
         elif dest == "rogue":
             self.show_page("rogue")
         elif dest == "settings":
-            # Quick toggle theme on settings
             ThemeManager.toggle_theme()
             self.apply_theme()
         elif dest in ("speed", "wifi"):
-            # Sub-features route to autotest/discovery
             self.show_page("discovery")
 
     def _on_theme_changed(self, theme_name: str):
         self.apply_theme()
 
     def apply_theme(self):
-        """Re-render entire application stylesheet."""
+        """Re-render entire application stylesheet and notify child views."""
         stylesheet = ThemeManager.get_stylesheet()
         QApplication.instance().setStyleSheet(stylesheet)
         self.top_bar.update_logo()
+        self.top_bar.update_theme_icon()
         self.boot_screen.update_logo()
+        self.main_menu.update_theme()
+
+    def _poll_network_telemetry(self):
+        """Poll real network hardware status and update bars."""
+        active_iface = NetworkDetector.get_active_interface()
+        has_carrier = NetworkDetector.get_carrier(active_iface)
+        speed, _ = NetworkDetector.get_speed_duplex(active_iface)
+
+        self.top_bar.update_eth_status(has_carrier, speed)
+        self.bottom_bar.refresh_telemetry()
