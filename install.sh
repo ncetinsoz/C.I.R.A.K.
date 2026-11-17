@@ -75,7 +75,9 @@ SYSTEM_PACKAGES=(
     libcap2-bin
 
     # PySide6 / Qt6 DRM/KMS EGLFS grafik bağımlılıkları (X11'siz Lite OS için)
+    libgl1
     libgl1-mesa-dri
+    libglx-mesa0
     libegl1
     libgles2
     libxkbcommon0
