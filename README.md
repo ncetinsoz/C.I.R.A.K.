@@ -73,23 +73,9 @@ The instrument is built upon a native software stack designed for high stability
 * **Hardware Unit:** Raspberry Pi 4 Model B paired with the official 7-inch capacitive touchscreen display (800x480 resolution, DSI display interface).
 * **Software Stack:** Python 3 and PySide6 (Qt6) graphical user interface framework running on Linux (Raspberry Pi OS Lite). Operates directly over the system framebuffer without requiring a desktop window manager, ensuring rapid boot times and reliable performance.
 
-### Installation and Execution
-
-```bash
-# Create virtual environment and install dependencies
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-
-# Run application in development environment
-python -m cirak.app
-
-# Run directly on the device display via framebuffer
-QT_QPA_PLATFORM=eglfs python -m cirak.app
-```
 
 ---
 
 ## Lisans / License
-Bu proje, Yönetim Bilişim Sistemleri Yüksek Lisans Tezi araştırması kapsamında geliştirilmektedir.  
-This project is developed as part of a Master's Thesis research in Management Information Systems.
+Bu proje, Dokuz Eylül Üniversitesi, Yönetim Bilişim Sistemleri alanında yüksek lisans araştırması kapsamında geliştirilmektedir.  
+This project is being developed as part of a master's research in the field of Management Information Systems at Dokuz Eylül University.
