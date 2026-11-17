@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="assets/images/cirak_logo_light.jpg" alt="ÇIRAK Logo" width="160" style="border-radius: 16px;" />
+<img src="assets/images/cirak_logo.png" alt="ÇIRAK Logo" width="220" />
 
 # Ç.I.R.A.K.
 ### Çok Amaçlı İnceleme, Raporlama ve Ağ Keşif Cihazı
