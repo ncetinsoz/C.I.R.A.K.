@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="assets/images/cirak_logo.png" alt="Ç.I.R.A.K. Logo" width="200" />
+<img src="assets/images/cirak_logo.png" alt="Ç.I.R.A.K. Logo" width="300" />
 
 # Ç.I.R.A.K.
 ### Çok Amaçlı İnceleme, Raporlama ve Ağ Keşif Cihazı
@@ -22,7 +22,7 @@ Kurumsal ve kampüs bilgi teknolojileri altyapılarında yaşanan ağ kesintiler
 
 Cihazın temel amacı, teknik servis ekiplerinin arıza bildirilen uç noktada harici bir bilgisayara ihtiyaç duymadan saniyeler içinde çok katmanlı ağ analizi yapabilmesini ve ortalama arıza çözüm süresini (MTTR) en aza indirmesini sağlamaktır.
 
-### Özgün Katkı: Sahada Yetkisiz DHCP ve Port Tespiti
+### Sahada Yetkisiz DHCP ve Port Tespiti
 Yerel ağlarda kullanıcıların bilinçsizce veya yetkisiz biçimde ağa dahil ettiği modem ve yönlendiriciler, istemcilere hatalı IP adresleri dağıtarak ağ trafiğini kesintiye uğratmaktadır. Ç.I.R.A.K., fiziksel hat arasına ek bir donanım takılmasına gerek duymadan tek bir ağ portu üzerinden şu işlemleri yürütür:
 1. Bulunduğu yerel ağdaki yetkisiz DHCP sunucu yayınlarını tespit eder ve kurumsal beyaz liste ile karşılaştırır.
 2. Tespit edilen sahte cihazın donanım (MAC) adresini ağ anahtarları (switch) üzerinden sorgulayarak, cihazın hangi anahtara ve hangi fiziksel porta bağlı olduğunu ekranda raporlar.
@@ -68,7 +68,7 @@ Network outages, misconfigured VLANs or switch ports, IP address conflicts, and 
 
 The primary objective of the device is to enable technical service teams to perform multi-layer network diagnostics within seconds at the reported fault location without requiring an external computer, thereby minimizing Mean Time to Repair (MTTR).
 
-### Unique Contribution: Field Rogue DHCP and Port Localization
+### Field Rogue DHCP and Port Localization
 Modems and routers inadvertently or illicitly connected to local area networks distribute invalid IP configurations to clients and disrupt network traffic. Without requiring an inline hardware tap, Ç.I.R.A.K. performs the following operations over a single network port:
 1. Detects unauthorized DHCP server broadcasts within the local network and compares them against the corporate whitelist.
 2. Queries network switches using the hardware (MAC) address of the detected rogue device to identify and display the exact switch and physical port to which the offending device is connected.
