@@ -24,7 +24,7 @@ class ExternalTest(BaseTest):
         simulate: bool = False,
     ):
         iface = interface or NetworkDetector.get_active_interface()
-        super().__init__(name="6. Dış Ağ (ULAKBIM)", interface=iface, simulate=simulate)
+        super().__init__(name="6. Erişim Testi (İç & Dış Ağ)", interface=iface, simulate=simulate)
         self.target_url = target_url
         self.timeout_sec = timeout_sec
 

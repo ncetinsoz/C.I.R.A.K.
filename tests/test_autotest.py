@@ -38,4 +38,4 @@ def test_autotest_full_chain_simulation():
     assert "3. DHCP Sunucusu" in step_names[2]
     assert "4. Gateway Ping" in step_names[3]
     assert "5. DNS Çözümleme" in step_names[4]
-    assert "6. Dış Ağ (ULAKBIM)" in step_names[5]
+    assert "6. Erişim Testi" in step_names[5]

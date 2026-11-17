@@ -48,18 +48,51 @@ def run_terminal_diag(interface: Optional[str] = None, simulate: bool = False):
 
 
 def capture_screen(output_path: str = "/tmp/cirak_screen.png") -> bool:
-    """Capture raw linuxfb /dev/fb0 framebuffer directly to PNG on Raspberry Pi."""
+    """
+    Capture raw linuxfb /dev/fb0 framebuffer directly on Raspberry Pi.
+    Uses pure Python standard library BMP format (zero external dependencies),
+    or PIL/Pillow for PNG if installed.
+    """
     fb_path = "/dev/fb0"
     if not os.path.exists(fb_path):
-        print(f"Hata: {fb_path} aygıtı bulunamadı.")
+        print(f"Hata: {fb_path} aygıtı bulunamadı. Lütfen X11/linuxfb ortamını kontrol edin.")
         return False
+
+    width = config.SCREEN_WIDTH
+    height = config.SCREEN_HEIGHT
+    row_size = width * 4
+    image_size = row_size * height
+
     try:
-        from PIL import Image
         with open(fb_path, "rb") as f:
-            raw = f.read(config.SCREEN_WIDTH * config.SCREEN_HEIGHT * 4)
-        img = Image.frombytes("RGBA", (config.SCREEN_WIDTH, config.SCREEN_HEIGHT), raw, "raw", "BGRX")
-        img.save(output_path)
-        print(f"✓ 7' Ekran görüntüsü kaydedildi: {output_path}")
+            raw = f.read(image_size)
+
+        # 1. If PIL is installed and output is .png, try saving PNG
+        if output_path.lower().endswith(".png"):
+            try:
+                from PIL import Image
+                img = Image.frombytes("RGBA", (width, height), raw, "raw", "BGRX")
+                img.save(output_path)
+                print(f"✓ 7\" Ekran görüntüsü kaydedildi (PNG): {output_path}")
+                print(f"  Bilgisayarınıza kopyalamak için: scp nezih@<RPi-IP>:{output_path} .")
+                return True
+            except ImportError:
+                # Seamless fallback to BMP
+                output_path = output_path.rsplit(".", 1)[0] + ".bmp"
+
+        # 2. Pure Python Standard Library BMP writer (zero dependency, universal format)
+        import struct
+        file_size = 54 + image_size
+        bmp_header = struct.pack("<2sIHHI", b"BM", file_size, 0, 0, 54)
+        dib_header = struct.pack("<IiiHHIIiiII", 40, width, -height, 1, 32, 0, image_size, 2835, 2835, 0, 0)
+
+        with open(output_path, "wb") as f:
+            f.write(bmp_header)
+            f.write(dib_header)
+            f.write(raw[:image_size])
+
+        print(f"✓ 7\" Ekran görüntüsü kaydedildi (BMP): {output_path}")
+        print(f"  Bilgisayarınıza kopyalamak için: scp nezih@<RPi-IP>:{output_path} .")
         return True
     except Exception as e:
         print(f"Ekran görüntüsü alınamadı: {e}")

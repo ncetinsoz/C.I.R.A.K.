@@ -295,7 +295,7 @@ class AutoTestView(QWidget):
         self.card_l3 = AutoTestStepCard(3, "DHCP Sunucusu")
         self.card_l4 = AutoTestStepCard(4, "Gateway Ping")
         self.card_l5 = AutoTestStepCard(5, "DNS Çözümleme")
-        self.card_l6 = AutoTestStepCard(6, "Dış Ağ (ULAKBIM)")
+        self.card_l6 = AutoTestStepCard(6, "Erişim Testi")
 
         self.cards: List[AutoTestStepCard] = [
             self.card_l1, self.card_l2, self.card_l3,

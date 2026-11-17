@@ -258,14 +258,21 @@ class NetworkDetector:
                     vlan_id = vlan.get("vlan-id") if isinstance(vlan, dict) else None
                     mgmt_ip = chassis.get("mgmt-ip", "")
 
+                    chassis_descr = chassis.get("descr", "")
+                    port_descr = port.get("descr", "")
+                    vlan_name = vlan.get("name", "") if isinstance(vlan, dict) else ""
+
                     if chassis_name or port_id:
                         return {
                             "system_name": chassis_name or "Switch",
+                            "system_description": chassis_descr,
                             "port_id": port_id or "Gi1/0/1",
+                            "port_description": port_descr,
                             "vlan_id": vlan_id,
+                            "vlan_name": vlan_name,
                             "management_ip": mgmt_ip,
                             "chassis_id": chassis_id,
-                            "protocol": "LLDP",
+                            "protocol": "LLDP/CDP",
                         }
         except Exception:
             pass

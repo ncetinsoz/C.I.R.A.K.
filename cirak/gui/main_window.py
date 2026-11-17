@@ -22,6 +22,7 @@ from cirak.gui.views.autotest_view import AutoTestView
 from cirak.gui.views.discovery_view import DiscoveryView
 from cirak.gui.views.rogue_dhcp_view import RogueDHCPView
 from cirak.gui.views.speed_test_view import SpeedTestView
+from cirak.gui.views.wifi_view import WiFiView
 from cirak.gui.views.boot_screen import BootScreen
 
 
@@ -65,6 +66,7 @@ class MainWindow(QMainWindow):
         self.discovery_view = DiscoveryView(self)
         self.rogue_view = RogueDHCPView(self)
         self.speed_view = SpeedTestView(self)
+        self.wifi_view = WiFiView(self)
 
         self.stack.addWidget(self.boot_screen)     # Index 0
         self.stack.addWidget(self.main_menu)       # Index 1
@@ -72,6 +74,7 @@ class MainWindow(QMainWindow):
         self.stack.addWidget(self.discovery_view)  # Index 3
         self.stack.addWidget(self.rogue_view)      # Index 4
         self.stack.addWidget(self.speed_view)      # Index 5
+        self.stack.addWidget(self.wifi_view)       # Index 6
 
         # Navigation wiring
         self.boot_screen.boot_completed.connect(lambda: self.show_page("main"))
@@ -80,6 +83,7 @@ class MainWindow(QMainWindow):
         self.discovery_view.back_requested.connect(lambda: self.show_page("main"))
         self.rogue_view.back_requested.connect(lambda: self.show_page("main"))
         self.speed_view.back_requested.connect(lambda: self.show_page("main"))
+        self.wifi_view.back_requested.connect(lambda: self.show_page("main"))
 
         # 3. Bottom Quick-Info Bar (42px)
         self.bottom_bar = BottomBar(self)
@@ -114,6 +118,8 @@ class MainWindow(QMainWindow):
             self.stack.setCurrentIndex(4)
         elif page_name == "speed":
             self.stack.setCurrentIndex(5)
+        elif page_name == "wifi":
+            self.stack.setCurrentIndex(6)
 
     def _on_navigate(self, dest: str):
         if dest == "autotest":
@@ -124,11 +130,11 @@ class MainWindow(QMainWindow):
             self.show_page("rogue")
         elif dest == "speed":
             self.show_page("speed")
+        elif dest == "wifi":
+            self.show_page("wifi")
         elif dest == "settings":
             ThemeManager.toggle_theme()
             self.apply_theme()
-        elif dest == "wifi":
-            self.show_page("discovery")
 
     def _on_theme_changed(self, theme_name: str):
         self.apply_theme()

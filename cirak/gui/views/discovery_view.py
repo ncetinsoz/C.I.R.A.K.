@@ -151,17 +151,34 @@ class DiscoveryView(QWidget):
         main_layout.addWidget(self.table)
 
     def _run_lldp_query(self):
+        self.btn_read_lldp.setText("Dinleniyor...")
+        self.btn_read_lldp.setEnabled(False)
         test = LLDPCdpTest(simulate=False)
         res = test.run()
+        self.btn_read_lldp.setText("LLDP / CDP Dinle")
+        self.btn_read_lldp.setEnabled(True)
+
         d = res.details
         if d.get("system_name"):
-            self.lldp_details.setText(
-                f"Switch: {d.get('system_name')}\n"
-                f"Port: {d.get('port_id')} | VLAN: {d.get('vlan_id', 'Untagged')}\n"
-                f"Yönetim IP: {d.get('management_ip', 'Bilinmiyor')}"
-            )
+            vlan_str = f"VLAN {d.get('vlan_id')}" if d.get('vlan_id') else "Untagged"
+            if d.get("vlan_name"):
+                vlan_str += f" ({d.get('vlan_name')})"
+
+            port_str = d.get('port_id', 'Gi1/0/1')
+            if d.get('port_description'):
+                port_str += f" ({d.get('port_description')})"
+
+            lines = [
+                f"Switch: {d.get('system_name')}",
+                f"Port  : {port_str}",
+                f"VLAN  : {vlan_str}",
+                f"Yönetim IP: {d.get('management_ip') or 'Bilinmiyor'}",
+            ]
+            self.lldp_details.setText("\n".join(lines))
+            self.lldp_details.setStyleSheet("background: transparent; font-family: monospace; font-size: 10px; color: #38bdf8; font-weight: bold;")
         else:
-            self.lldp_details.setText("LLDP Yanıtı Alınamadı\n(Switchte LLDP/CDP açık olmayabilir)")
+            self.lldp_details.setText("LLDP/CDP Paketi Bekleniyor...\n(Switch'ler 30s aralıkla yayar veya yönetimsiz hub)")
+            self.lldp_details.setStyleSheet("background: transparent; font-family: monospace; font-size: 10px; color: #f59e0b;")
 
     def _toggle_blinker(self):
         if self.blinker.is_blinking:
