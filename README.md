@@ -41,20 +41,6 @@ Cihaz, sahada kararlı ve düşük kaynak tüketimiyle çalışacak şekilde yer
 * **Donanım Birimi:** Raspberry Pi 4 Model B ve resmi 7 inç kapasitif dokunmatik ekran (800x480 çözünürlük, DSI görüntü veri yolu).
 * **Yazılım Altyapısı:** Linux (Raspberry Pi OS Lite) işletim sistemi üzerinde çalışan Python 3 ve PySide6 (Qt6) grafik arayüz çatısı. Masaüstü pencere yöneticisine ihtiyaç duymadan doğrudan ekran çerçeve belleği üzerinden hızlı açılış ve kesintisiz çalışma sağlar.
 
-### Kurulum ve Çalıştırma
-
-```bash
-# Sanal ortamın oluşturulması ve bağımlılıkların yüklenmesi
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-
-# Uygulamanın geliştirme ortamında başlatılması
-python -m cirak.app
-
-# Cihaz üzerinde doğrudan ekran sürücüsü ile başlatılması
-QT_QPA_PLATFORM=eglfs python -m cirak.app
-```
 
 ---
 
