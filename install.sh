@@ -186,8 +186,21 @@ WantedBy=multi-user.target
 EOF
 
 $SUDO_CMD systemctl daemon-reload
-echo -e "${GREEN}[OK]${NC} Systemd servis dosyası hazırlandı (${SERVICE_FILE})."
-echo -e "${YELLOW}[İPUCU]${NC} Cihaz açıldığında otomatik başlaması için: ${BOLD}sudo systemctl enable cirak.service${NC}"
+$SUDO_CMD systemctl enable cirak.service
+echo -e "${GREEN}[OK]${NC} Ç.I.R.A.K. servisi otomatik başlangıca eklendi (${SERVICE_FILE})."
+echo -e "${GREEN}[OK]${NC} Cihaz açıldığında doğrudan Ç.I.R.A.K. el terminali arayüzü ile başlayacaktır."
+
+# Endüstriyel El Terminali Sessiz Açılış (Quiet Boot / Konsol Yazılarını Gizleme)
+CMDLINE_PATH="/boot/firmware/cmdline.txt"
+[ ! -f "$CMDLINE_PATH" ] && CMDLINE_PATH="/boot/cmdline.txt"
+
+if [ -f "$CMDLINE_PATH" ]; then
+    echo -e "${BLUE}[INFO]${NC} Sessiz açılış (Quiet Appliance Boot) ayarları kontrol ediliyor..."
+    if ! grep -q "quiet splash" "$CMDLINE_PATH"; then
+        $SUDO_CMD sed -i 's/$/ quiet splash loglevel=3 vt.global_cursor_default=0/' "$CMDLINE_PATH" 2>/dev/null || true
+        echo -e "${GREEN}[OK]${NC} Konsol akış yazıları gizlendi, profesyonel açılış yapılandırıldı."
+    fi
+fi
 
 # 8. Otomatik Testlerin Çalıştırılması ve Doğrulama
 echo -e "\n${CYAN}==> 6/6: Otomatik Test Paketi (Pytest) Doğrulanıyor...${NC}"
@@ -203,8 +216,9 @@ echo -e "\n${CYAN}${BOLD}=======================================================
 echo -e "${GREEN}${BOLD}  Kurulum Başarıyla Tamamlandı!                                 ${NC}"
 echo -e "${CYAN}${BOLD}================================================================${NC}"
 echo -e "Kullanım Seçenekleri:"
-echo -e "  1. Manuel Çalıştırma:          ${BOLD}cirak${NC} (veya ${BOLD}cirak --fullscreen${NC})"
-echo -e "  2. Testleri Yeniden Koşma:    ${BOLD}${VENV_DIR}/bin/pytest -v${NC}"
-echo -e "  3. Açılışta Otomatik Başlatma: ${BOLD}sudo systemctl enable --now cirak.service${NC}"
-echo -e "  4. Servis Durumu İzleme:       ${BOLD}systemctl status cirak.service${NC}"
+echo -e "  1. Servisi Hemen Başlatma:    ${BOLD}sudo systemctl start cirak.service${NC}"
+echo -e "  2. Manuel Konsoldan Başlatma:  ${BOLD}cirak${NC} (veya ${BOLD}cirak --fullscreen${NC})"
+echo -e "  3. Testleri Yeniden Koşma:     ${BOLD}${VENV_DIR}/bin/pytest -v${NC}"
+echo -e "  4. Servis Durumu İzleme:        ${BOLD}systemctl status cirak.service${NC}"
+echo -e "  * Servis zaten otomatik başlangıca eklenmiştir; yeniden başlattığınızda doğrudan açılacaktır."
 echo -e "${CYAN}================================================================${NC}\n"
