@@ -116,6 +116,11 @@ if command -v rfkill >/dev/null 2>&1; then
 fi
 $SUDO_CMD ip link set wlan0 up 2>/dev/null || true
 
+# Türkiye Wi-Fi bölge kodunu kalıcı tanımla (5 GHz ve 2.4 GHz tüm kanallar için)
+if command -v raspi-config >/dev/null 2>&1; then
+    $SUDO_CMD raspi-config nonint do_wifi_country TR 2>/dev/null || true
+fi
+
 # Wireshark / TShark izinleri (root olmadan paket yakalama)
 if getent group wireshark >/dev/null; then
     $SUDO_CMD usermod -aG wireshark "$ACTUAL_USER" || true
