@@ -79,3 +79,24 @@ def test_parse_cdp_synthetic_frame():
     assert parsed.vlan_id == 65
     assert parsed.vendor == "Cisco Systems"
     assert parsed.is_unauthorized_switch is False
+
+
+def test_parse_eapol_nac_and_pvst_vlan():
+    test = LLDPCdpTest(simulate=True)
+
+    # 1. 802.1X EAPOL Request-Identity frame from Cisco switch port MAC (00:26:cb:11:22:33)
+    eapol_payload = b"\x02\x00\x00\x05\x01\x01\x00\x05\x01"
+    nac_info = test.parse_eapol_nac_frame(eapol_payload, src_mac="00:26:cb:11:22:33")
+    assert nac_info is not None
+    assert "802.1X NAC" in nac_info.protocol
+    assert "Cisco" in nac_info.vendor
+    assert "Standart Ağ Cihazı" not in nac_info.system_name
+
+    # 2. Cisco PVST+ BPDU with trailing PVID TLV (00:00:00:02:00:66 -> VLAN 102)
+    pvst_payload = (b"\xaa\xaa\x03\x00\x00\x0c\x01\x0b" + (b"\x00" * 35) + b"\x00\x00\x00\x02\x00\x66")
+    stp_info = test.parse_stp_bpdu(pvst_payload, src_mac="94:33:d8:2a:01:ef", is_pvst=True)
+    assert stp_info is not None
+    assert stp_info.vlan_id == 102
+    assert "PVST+" in stp_info.protocol
+    assert "Cisco" in stp_info.vendor
+

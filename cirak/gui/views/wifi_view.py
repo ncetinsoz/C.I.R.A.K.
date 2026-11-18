@@ -2,9 +2,10 @@
 Wi-Fi Spectrum & Access Point Analyzer View for Ç.I.R.A.K.
 Displays live AP table, 2.4 GHz vs 5 GHz channel congestion,
 signal levels, encryption standards, and cleanest channel suggestions.
+Supports both Dark and Light Industrial themes.
 """
 
-from typing import List, Optional
+from typing import Optional
 from PySide6.QtCore import Qt, Signal, QThreadPool
 from PySide6.QtGui import QFont, QColor
 from PySide6.QtWidgets import (
@@ -19,8 +20,9 @@ from PySide6.QtWidgets import (
     QHeaderView,
 )
 from cirak import config
-from cirak.backend.wifi_scanner import WiFiScanner, WiFiScanReport, WiFiAccessPoint
+from cirak.backend.wifi_scanner import WiFiScanner, WiFiScanReport
 from cirak.core.worker import BaseWorker
+from cirak.gui.theme import ThemeManager
 
 
 class WiFiView(QWidget):
@@ -34,6 +36,7 @@ class WiFiView(QWidget):
         self.last_report: Optional[WiFiScanReport] = None
         self.current_filter = "ALL"  # "ALL", "2.4", "5"
         self._init_ui()
+        self.update_theme()
 
     def _init_ui(self):
         main_layout = QVBoxLayout(self)
@@ -50,21 +53,13 @@ class WiFiView(QWidget):
         self.back_btn.setCursor(Qt.PointingHandCursor)
         self.back_btn.clicked.connect(self.back_requested.emit)
 
-        title = QLabel("Kablosuz Ağ (Wi-Fi 2.4 / 5 GHz Analizörü)")
+        self.title_lbl = QLabel("Kablosuz Ağ (Wi-Fi 2.4 / 5 GHz Analizörü)")
         title_font = QFont("DejaVu Sans", 11, QFont.Bold)
-        title.setFont(title_font)
-        title.setStyleSheet("background: transparent; color: #0ea5e9; font-weight: 800;")
+        self.title_lbl.setFont(title_font)
 
         self.ap_count_badge = QLabel("Taranıyor...")
         badge_font = QFont("DejaVu Sans Mono", 9, QFont.Bold)
         self.ap_count_badge.setFont(badge_font)
-        self.ap_count_badge.setStyleSheet("""
-            background-color: transparent;
-            color: #94a3b8;
-            border: 1px solid #334155;
-            border-radius: 4px;
-            padding: 3px 10px;
-        """)
 
         self.rescan_btn = QPushButton("🔄 Yeniden Tara")
         self.rescan_btn.setProperty("class", "PrimaryBtn")
@@ -73,26 +68,18 @@ class WiFiView(QWidget):
         self.rescan_btn.clicked.connect(self.start_scan)
 
         header.addWidget(self.back_btn)
-        header.addWidget(title)
+        header.addWidget(self.title_lbl)
         header.addStretch()
         header.addWidget(self.ap_count_badge)
         header.addWidget(self.rescan_btn)
 
         # 2. Filter & Spectrum Summary Bar
-        summary_frame = QFrame()
-        summary_frame.setFixedHeight(36)
-        summary_frame.setStyleSheet("""
-            QFrame {
-                background-color: #0f172a;
-                border: 1px solid #1e293b;
-                border-radius: 8px;
-            }
-        """)
-        s_layout = QHBoxLayout(summary_frame)
+        self.summary_frame = QFrame()
+        self.summary_frame.setFixedHeight(36)
+        s_layout = QHBoxLayout(self.summary_frame)
         s_layout.setContentsMargins(8, 0, 8, 0)
         s_layout.setSpacing(10)
 
-        # Filter buttons
         self.btn_filter_all = QPushButton("Tümü")
         self.btn_filter_all.setFixedHeight(24)
         self.btn_filter_all.clicked.connect(lambda: self._set_filter("ALL"))
@@ -109,20 +96,17 @@ class WiFiView(QWidget):
         s_layout.addWidget(self.btn_filter_24)
         s_layout.addWidget(self.btn_filter_5)
 
-        divider = QLabel("|")
-        divider.setStyleSheet("background: transparent; color: #334155;")
-        s_layout.addWidget(divider)
+        self.divider = QLabel("|")
+        s_layout.addWidget(self.divider)
 
         self.lbl_channel_rec = QLabel("Önerilen 2.4G Kanalı: Kanal 1 (En az çakışma)")
         f_font = QFont("DejaVu Sans Mono", 9)
         self.lbl_channel_rec.setFont(f_font)
-        self.lbl_channel_rec.setStyleSheet("background: transparent; color: #10b981; font-weight: bold;")
         s_layout.addWidget(self.lbl_channel_rec)
         s_layout.addStretch()
 
         self.lbl_connected = QLabel("Bağlı Ağ: Yok")
         self.lbl_connected.setFont(f_font)
-        self.lbl_connected.setStyleSheet("background: transparent; color: #38bdf8;")
         s_layout.addWidget(self.lbl_connected)
 
         # 3. Wi-Fi APs Table
@@ -142,39 +126,63 @@ class WiFiView(QWidget):
         header_view.setSectionResizeMode(4, QHeaderView.ResizeToContents)
         header_view.setSectionResizeMode(5, QHeaderView.ResizeToContents)
 
-        self.table.setStyleSheet("""
-            QTableWidget {
-                background-color: #0f172a;
-                border: 1.5px solid #1e293b;
-                border-radius: 8px;
-                color: #f8fafc;
-                font-family: "DejaVu Sans", sans-serif;
-                font-size: 11px;
-            }
-            QHeaderView::section {
-                background-color: #1e293b;
-                color: #94a3b8;
-                font-weight: 700;
-                font-size: 11px;
-                border: none;
-                padding: 6px;
-            }
-            QTableWidget::item {
-                padding: 4px;
-                border-bottom: 1px solid #1e293b;
-            }
-            QTableWidget::item:selected {
-                background-color: #0284c7;
-                color: #ffffff;
-            }
-        """)
-
         main_layout.addLayout(header)
-        main_layout.addWidget(summary_frame)
+        main_layout.addWidget(self.summary_frame)
         main_layout.addWidget(self.table)
 
         # Trigger initial scan
         self.start_scan()
+
+    def update_theme(self):
+        """Apply active theme palette (Dark or Light) to WiFiView and QTableWidget."""
+        colors = ThemeManager.get_colors()
+        self.title_lbl.setStyleSheet(f"background: transparent; color: {colors['accent_sky']}; font-weight: 800;")
+        self.ap_count_badge.setStyleSheet(f"""
+            background-color: transparent;
+            color: {colors['text_secondary']};
+            border: 1px solid {colors['card_border']};
+            border-radius: 4px;
+            padding: 3px 10px;
+        """)
+        self.summary_frame.setStyleSheet(f"""
+            QFrame {{
+                background-color: {colors['card_bg']};
+                border: 1px solid {colors['card_border']};
+                border-radius: 8px;
+            }}
+        """)
+        self.divider.setStyleSheet(f"background: transparent; color: {colors['card_border']};")
+        self.lbl_channel_rec.setStyleSheet(f"background: transparent; color: {colors['status_success']}; font-weight: bold;")
+        self.lbl_connected.setStyleSheet(f"background: transparent; color: {colors['accent_cyan']};")
+
+        self.table.setStyleSheet(f"""
+            QTableWidget {{
+                background-color: {colors['card_bg']};
+                border: 1.5px solid {colors['card_border']};
+                border-radius: 8px;
+                color: {colors['text_primary']};
+                font-family: "DejaVu Sans", sans-serif;
+                font-size: 11px;
+            }}
+            QHeaderView::section {{
+                background-color: {colors['bar_bg']};
+                color: {colors['text_secondary']};
+                font-weight: 700;
+                font-size: 11px;
+                border: none;
+                border-bottom: 1px solid {colors['card_border']};
+                padding: 6px;
+            }}
+            QTableWidget::item {{
+                padding: 4px;
+                border-bottom: 1px solid {colors['card_border']};
+            }}
+            QTableWidget::item:selected {{
+                background-color: {colors['accent_cyan']};
+                color: #ffffff;
+            }}
+        """)
+        self._populate_table()
 
     def _set_filter(self, filter_mode: str):
         self.current_filter = filter_mode
@@ -218,6 +226,7 @@ class WiFiView(QWidget):
         if not self.last_report:
             return
 
+        colors = ThemeManager.get_colors()
         filtered_aps = []
         for ap in self.last_report.access_points:
             if self.current_filter == "ALL":
@@ -232,39 +241,33 @@ class WiFiView(QWidget):
         for row, ap in enumerate(filtered_aps):
             self.table.setRowHeight(row, 32)
 
-            # Signal Item
-            signal_color = "#10b981" if ap.signal_pct >= 70 else ("#f59e0b" if ap.signal_pct >= 40 else "#ef4444")
+            signal_color = colors["status_success"] if ap.signal_pct >= 70 else (colors["status_warning"] if ap.signal_pct >= 40 else colors["status_error"])
             item_sig = QTableWidgetItem(f"{ap.signal_dbm} dBm (%{ap.signal_pct})")
             item_sig.setForeground(QColor(signal_color))
             item_sig.setFont(QFont("DejaVu Sans Mono", 10, QFont.Bold))
 
-            # SSID Item
             prefix = "● " if ap.is_connected else ""
             item_ssid = QTableWidgetItem(f"{prefix}{ap.ssid}")
             item_ssid.setFont(QFont("DejaVu Sans", 11, QFont.Bold if ap.is_connected else QFont.Normal))
             if ap.is_connected:
-                item_ssid.setForeground(QColor("#38bdf8"))
+                item_ssid.setForeground(QColor(colors["accent_cyan"]))
 
-            # Channel
             item_chan = QTableWidgetItem(f"Kanal {ap.channel}")
             item_chan.setTextAlignment(Qt.AlignCenter)
             item_chan.setFont(QFont("DejaVu Sans Mono", 10))
 
-            # Band
-            band_color = "#0ea5e9" if ap.band == "5 GHz" else "#f59e0b"
+            band_color = colors["accent_sky"] if ap.band == "5 GHz" else colors["accent_amber"]
             item_band = QTableWidgetItem(ap.band)
             item_band.setTextAlignment(Qt.AlignCenter)
             item_band.setForeground(QColor(band_color))
             item_band.setFont(QFont("DejaVu Sans Mono", 10, QFont.Bold))
 
-            # Security
             item_sec = QTableWidgetItem(ap.security)
             item_sec.setFont(QFont("DejaVu Sans", 10))
 
-            # BSSID (MAC)
             item_mac = QTableWidgetItem(ap.bssid)
             item_mac.setFont(QFont("DejaVu Sans Mono", 9))
-            item_mac.setForeground(QColor("#94a3b8"))
+            item_mac.setForeground(QColor(colors["text_secondary"]))
 
             self.table.setItem(row, 0, item_sig)
             self.table.setItem(row, 1, item_ssid)

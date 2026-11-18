@@ -1,15 +1,15 @@
 """
 AutoTest View: 10-Second Complete L1-L7 Health Report.
 Displays 6 test step cards in 3x2 layout with live status and progress updates.
-Faithfully recreates the layout from cirak_ui_prototype.html with zero visual artifacts.
+Supports seamless Dark & Light Industrial themes.
 """
 
 import json
 from pathlib import Path
 import time
 from typing import List, Optional
-from PySide6.QtCore import Qt, Signal, QThreadPool, QSize
-from PySide6.QtGui import QFont, QColor
+from PySide6.QtCore import Qt, Signal, QThreadPool
+from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -24,7 +24,6 @@ from cirak import config
 from cirak.backend.autotest import AutoTestRunner
 from cirak.core.models import TestResult, TestStatus, AutoTestReport
 from cirak.core.worker import BaseWorker
-from cirak.gui.icons import get_svg_pixmap
 from cirak.gui.theme import ThemeManager
 
 
@@ -36,6 +35,8 @@ class AutoTestStepCard(QFrame):
         self.setObjectName("AutoTestStepCard")
         self.step_num = step_num
         self.step_title = title
+        self._last_state = "reset"  # "reset", "running", "result"
+        self._last_result: Optional[TestResult] = None
         self._init_ui()
         self.reset_card()
 
@@ -52,7 +53,6 @@ class AutoTestStepCard(QFrame):
         self.title_label.setObjectName("AutoTestStepTitle")
         t_font = QFont("DejaVu Sans", 10, QFont.Bold)
         self.title_label.setFont(t_font)
-        self.title_label.setStyleSheet("background: transparent; border: none; color: #f8fafc; font-weight: 700;")
 
         self.status_badge = QLabel("BEKLİYOR")
         self.status_badge.setObjectName("AutoTestStepBadge")
@@ -70,26 +70,37 @@ class AutoTestStepCard(QFrame):
         self.line1.setObjectName("AutoTestStepLine1")
         l1_font = QFont("DejaVu Sans Mono", 10, QFont.Bold)
         self.line1.setFont(l1_font)
-        self.line1.setStyleSheet("background: transparent; border: none; color: #94a3b8;")
 
         self.line2 = QLabel("")
         self.line2.setObjectName("AutoTestStepLine2")
         l2_font = QFont("DejaVu Sans Mono", 9)
         self.line2.setFont(l2_font)
-        self.line2.setStyleSheet("background: transparent; border: none; color: #64748b;")
 
         layout.addLayout(header_layout)
         layout.addWidget(self.line1)
         layout.addWidget(self.line2)
         layout.addStretch()
 
+    def update_theme(self):
+        """Re-apply current card state with active theme palette."""
+        if self._last_state == "running":
+            self.set_running()
+        elif self._last_state == "result" and self._last_result is not None:
+            self.set_result(self._last_result)
+        else:
+            self.reset_card()
+
     def reset_card(self):
-        is_dark = ThemeManager.get_current_theme() == config.THEME_DARK
-        card_bg = "#0f172a" if is_dark else "#ffffff"
+        self._last_state = "reset"
+        self._last_result = None
+        colors = ThemeManager.get_colors()
+        self.title_label.setStyleSheet(
+            f"background: transparent; border: none; color: {colors['text_primary']}; font-weight: 700;"
+        )
         self.setStyleSheet(f"""
             QFrame#AutoTestStepCard {{
-                background-color: {card_bg};
-                border: 1.5px solid #1e293b;
+                background-color: {colors['card_bg']};
+                border: 1.5px solid {colors['card_border']};
                 border-radius: 10px;
             }}
             #AutoTestStepCard QLabel {{
@@ -98,26 +109,31 @@ class AutoTestStepCard(QFrame):
             }}
         """)
         self.status_badge.setText("BEKLİYOR")
-        self.status_badge.setStyleSheet("""
-            QLabel#AutoTestStepBadge {
+        self.status_badge.setStyleSheet(f"""
+            QLabel#AutoTestStepBadge {{
                 background-color: transparent;
-                color: #64748b;
-                border: 1px solid #334155;
+                color: {colors['text_muted']};
+                border: 1px solid {colors['card_border']};
                 border-radius: 4px;
                 padding: 1px 6px;
-            }
+            }}
         """)
         self.line1.setText("Henüz test edilmedi")
-        self.line1.setStyleSheet("background: transparent; border: none; color: #94a3b8;")
+        self.line1.setStyleSheet(f"background: transparent; border: none; color: {colors['text_secondary']};")
         self.line2.setText("")
+        self.line2.setStyleSheet(f"background: transparent; border: none; color: {colors['text_muted']};")
 
     def set_running(self):
-        is_dark = ThemeManager.get_current_theme() == config.THEME_DARK
-        card_bg = "#0f172a" if is_dark else "#ffffff"
+        self._last_state = "running"
+        colors = ThemeManager.get_colors()
+        accent = colors["accent_cyan"]
+        self.title_label.setStyleSheet(
+            f"background: transparent; border: none; color: {colors['text_primary']}; font-weight: 700;"
+        )
         self.setStyleSheet(f"""
             QFrame#AutoTestStepCard {{
-                background-color: {card_bg};
-                border: 1.5px solid #06b6d4;
+                background-color: {colors['card_bg']};
+                border: 1.5px solid {accent};
                 border-radius: 10px;
             }}
             #AutoTestStepCard QLabel {{
@@ -126,82 +142,90 @@ class AutoTestStepCard(QFrame):
             }}
         """)
         self.status_badge.setText("TEST EDİLİYOR...")
-        self.status_badge.setStyleSheet("""
-            QLabel#AutoTestStepBadge {
+        self.status_badge.setStyleSheet(f"""
+            QLabel#AutoTestStepBadge {{
                 background-color: rgba(6, 182, 212, 0.15);
-                color: #22d3ee;
-                border: 1px solid #06b6d4;
+                color: {accent};
+                border: 1px solid {accent};
                 border-radius: 4px;
                 padding: 1px 6px;
-            }
+            }}
         """)
         self.line1.setText("Paketler gönderiliyor...")
-        self.line1.setStyleSheet("background: transparent; border: none; color: #22d3ee;")
+        self.line1.setStyleSheet(f"background: transparent; border: none; color: {accent};")
 
     def set_result(self, result: TestResult):
+        self._last_state = "result"
+        self._last_result = result
         is_dark = ThemeManager.get_current_theme() == config.THEME_DARK
-        card_bg = "#0f172a" if is_dark else "#ffffff"
+        colors = ThemeManager.get_colors()
+        self.title_label.setStyleSheet(
+            f"background: transparent; border: none; color: {colors['text_primary']}; font-weight: 700;"
+        )
 
         if result.status == TestStatus.PASSED:
             badge_text = f"✓ {result.duration_ms:.0f} ms" if (result.duration_ms > 0 and self.step_num in (3, 4, 5, 6)) else "✓ PASS"
-            border_color = "#10b981"
-            badge_style = """
-                QLabel#AutoTestStepBadge {
-                    background-color: #022c22;
-                    color: #10b981;
-                    border: 1px solid #10b981;
+            border_color = colors["status_success"]
+            badge_bg = "#022c22" if is_dark else "#dcfce7"
+            badge_style = f"""
+                QLabel#AutoTestStepBadge {{
+                    background-color: {badge_bg};
+                    color: {border_color};
+                    border: 1px solid {border_color};
                     border-radius: 4px;
                     padding: 1px 6px;
-                }
+                }}
             """
-            line1_color = "#f8fafc"
-            line2_color = "#10b981"
+            line1_color = colors["text_primary"]
+            line2_color = border_color
         elif result.status == TestStatus.WARNING:
             badge_text = "! UYARI"
-            border_color = "#f59e0b"
-            badge_style = """
-                QLabel#AutoTestStepBadge {
-                    background-color: #451a03;
-                    color: #f59e0b;
-                    border: 1px solid #f59e0b;
+            border_color = colors["status_warning"]
+            badge_bg = "#451a03" if is_dark else "#fef3c7"
+            badge_style = f"""
+                QLabel#AutoTestStepBadge {{
+                    background-color: {badge_bg};
+                    color: {border_color};
+                    border: 1px solid {border_color};
                     border-radius: 4px;
                     padding: 1px 6px;
-                }
+                }}
             """
-            line1_color = "#f8fafc"
-            line2_color = "#f59e0b"
+            line1_color = colors["text_primary"]
+            line2_color = border_color
         elif result.status == TestStatus.FAILED:
             badge_text = "✗ FAIL"
-            border_color = "#ef4444"
-            badge_style = """
-                QLabel#AutoTestStepBadge {
-                    background-color: #450a0a;
-                    color: #ef4444;
-                    border: 1px solid #ef4444;
+            border_color = colors["status_error"]
+            badge_bg = "#450a0a" if is_dark else "#fee2e2"
+            badge_style = f"""
+                QLabel#AutoTestStepBadge {{
+                    background-color: {badge_bg};
+                    color: {border_color};
+                    border: 1px solid {border_color};
                     border-radius: 4px;
                     padding: 1px 6px;
-                }
+                }}
             """
-            line1_color = "#ef4444"
-            line2_color = "#94a3b8"
+            line1_color = border_color
+            line2_color = colors["text_secondary"]
         else:
             badge_text = "ATLANDI"
-            border_color = "#334155"
-            badge_style = """
-                QLabel#AutoTestStepBadge {
+            border_color = colors["card_border"]
+            badge_style = f"""
+                QLabel#AutoTestStepBadge {{
                     background-color: transparent;
-                    color: #64748b;
-                    border: 1px solid #334155;
+                    color: {colors['text_muted']};
+                    border: 1px solid {border_color};
                     border-radius: 4px;
                     padding: 1px 6px;
-                }
+                }}
             """
-            line1_color = "#64748b"
-            line2_color = "#475569"
+            line1_color = colors["text_muted"]
+            line2_color = colors["text_secondary"]
 
         self.setStyleSheet(f"""
             QFrame#AutoTestStepCard {{
-                background-color: {card_bg};
+                background-color: {colors['card_bg']};
                 border: 1.5px solid {border_color};
                 border-radius: 10px;
             }}
@@ -213,7 +237,6 @@ class AutoTestStepCard(QFrame):
         self.status_badge.setText(badge_text)
         self.status_badge.setStyleSheet(badge_style)
 
-        # Format details
         summary_parts = result.summary.split("|")
         self.line1.setText(summary_parts[0].strip() if summary_parts else result.summary)
         self.line1.setStyleSheet(f"background: transparent; color: {line1_color};")
@@ -223,6 +246,7 @@ class AutoTestStepCard(QFrame):
             self.line2.setStyleSheet(f"background: transparent; color: {line2_color};")
         else:
             self.line2.setText(f"Süre: {result.duration_ms:.1f} ms" if result.duration_ms > 0 else "")
+            self.line2.setStyleSheet(f"background: transparent; color: {line2_color};")
 
 
 class AutoTestView(QWidget):
@@ -235,6 +259,7 @@ class AutoTestView(QWidget):
         self.runner: Optional[AutoTestRunner] = None
         self.last_report: Optional[AutoTestReport] = None
         self._init_ui()
+        self.update_theme()
 
     def _init_ui(self):
         main_layout = QVBoxLayout(self)
@@ -251,21 +276,13 @@ class AutoTestView(QWidget):
         self.back_btn.setCursor(Qt.PointingHandCursor)
         self.back_btn.clicked.connect(self.back_requested.emit)
 
-        title = QLabel("AutoTest (10 Saniyede Tam Sağlık Raporu)")
+        self.title_lbl = QLabel("AutoTest (10 Saniyede Tam Sağlık Raporu)")
         title_font = QFont("DejaVu Sans", 11, QFont.Bold)
-        title.setFont(title_font)
-        title.setStyleSheet("background: transparent; color: #22d3ee; font-weight: 800;")
+        self.title_lbl.setFont(title_font)
 
         self.summary_badge = QLabel("HAZIR")
         badge_font = QFont("DejaVu Sans Mono", 9, QFont.Bold)
         self.summary_badge.setFont(badge_font)
-        self.summary_badge.setStyleSheet("""
-            background-color: transparent;
-            color: #94a3b8;
-            border: 1px solid #334155;
-            border-radius: 4px;
-            padding: 3px 10px;
-        """)
 
         self.retest_btn = QPushButton("Yeniden Test Et")
         self.retest_btn.setProperty("class", "PrimaryBtn")
@@ -274,7 +291,7 @@ class AutoTestView(QWidget):
         self.retest_btn.clicked.connect(self.start_autotest)
 
         header.addWidget(self.back_btn)
-        header.addWidget(title)
+        header.addWidget(self.title_lbl)
         header.addStretch()
         header.addWidget(self.summary_badge)
         header.addWidget(self.retest_btn)
@@ -310,39 +327,17 @@ class AutoTestView(QWidget):
         cards_grid.addWidget(self.card_l6, 1, 2)
 
         # 4. Bottom Footer Bar (Report Summary & Save)
-        footer = QFrame()
-        footer.setFixedHeight(36)
-        footer.setStyleSheet("""
-            QFrame {
-                background-color: #0f172a;
-                border: 1px solid #1e293b;
-                border-radius: 8px;
-            }
-        """)
-        f_layout = QHBoxLayout(footer)
+        self.footer = QFrame()
+        self.footer.setFixedHeight(36)
+        f_layout = QHBoxLayout(self.footer)
         f_layout.setContentsMargins(12, 0, 12, 0)
 
         self.footer_text = QLabel("Tüm L1-L7 katmanlarını gerçek ağ donanımı üzerinden test eder.")
         f_font = QFont("DejaVu Sans Mono", 9)
         self.footer_text.setFont(f_font)
-        self.footer_text.setStyleSheet("background: transparent; color: #94a3b8;")
 
         self.save_btn = QPushButton("📄 Raporu Kaydet (JSON)")
         self.save_btn.setFixedHeight(24)
-        self.save_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #0891b2;
-                color: #ffffff;
-                border: none;
-                border-radius: 4px;
-                padding: 2px 8px;
-                font-size: 11px;
-                font-weight: 700;
-            }
-            QPushButton:hover {
-                background-color: #06b6d4;
-            }
-        """)
         self.save_btn.clicked.connect(self._save_report)
 
         f_layout.addWidget(self.footer_text)
@@ -352,22 +347,56 @@ class AutoTestView(QWidget):
         main_layout.addLayout(header)
         main_layout.addWidget(self.progress_bar)
         main_layout.addLayout(cards_grid)
-        main_layout.addWidget(footer)
+        main_layout.addWidget(self.footer)
+
+    def update_theme(self):
+        """Update AutoTestView and all 6 step cards for Dark and Light mode."""
+        colors = ThemeManager.get_colors()
+        self.title_lbl.setStyleSheet(f"background: transparent; color: {colors['accent_cyan']}; font-weight: 800;")
+        self.footer.setStyleSheet(f"""
+            QFrame {{
+                background-color: {colors['card_bg']};
+                border: 1px solid {colors['card_border']};
+                border-radius: 8px;
+            }}
+        """)
+        self.footer_text.setStyleSheet(f"background: transparent; color: {colors['text_secondary']};")
+        self.save_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {colors['accent_cyan']};
+                color: #ffffff;
+                border: none;
+                border-radius: 4px;
+                padding: 2px 8px;
+                font-size: 11px;
+                font-weight: 700;
+            }}
+        """)
+        if not self.last_report:
+            self.summary_badge.setStyleSheet(f"""
+                background-color: transparent;
+                color: {colors['text_secondary']};
+                border: 1px solid {colors['card_border']};
+                border-radius: 4px;
+                padding: 3px 10px;
+            """)
+        for c in self.cards:
+            c.update_theme()
 
     def start_autotest(self):
         """Execute real network diagnostic suite on background thread safely via Qt Signals."""
+        colors = ThemeManager.get_colors()
         self.retest_btn.setEnabled(False)
         self.summary_badge.setText("TEST BAŞLATILDI...")
-        self.summary_badge.setStyleSheet("""
+        self.summary_badge.setStyleSheet(f"""
             background-color: rgba(6, 182, 212, 0.15);
-            color: #22d3ee;
-            border: 1px solid #06b6d4;
+            color: {colors['accent_cyan']};
+            border: 1px solid {colors['accent_cyan']};
             border-radius: 4px;
             padding: 3px 10px;
         """)
         self.progress_bar.setValue(0)
 
-        # Reset all cards to waiting state on main GUI thread
         for c in self.cards:
             c.reset_card()
 
@@ -402,28 +431,28 @@ class AutoTestView(QWidget):
         self.last_report = report
         self.retest_btn.setEnabled(True)
         self.progress_bar.setValue(100)
+        is_dark = ThemeManager.get_current_theme() == config.THEME_DARK
+        colors = ThemeManager.get_colors()
 
         sec = report.total_duration_ms / 1000.0
         self.footer_text.setText(f"Süre: {sec:.1f} saniye • {report.passed_count}/6 test başarıyla tamamlandı.")
 
         if report.overall_passed:
             self.summary_badge.setText(f"✓ TÜM TESTLER GEÇTİ ({report.passed_count}/6)")
-            self.summary_badge.setStyleSheet("""
-                background-color: #022c22;
-                color: #10b981;
-                border: 1px solid #10b981;
-                border-radius: 4px;
-                padding: 3px 10px;
-            """)
+            bg = "#022c22" if is_dark else "#dcfce7"
+            fg = colors["status_success"]
         else:
             self.summary_badge.setText(f"! TEST TAMAMLANDI ({report.passed_count}/6)")
-            self.summary_badge.setStyleSheet("""
-                background-color: #451a03;
-                color: #f59e0b;
-                border: 1px solid #f59e0b;
-                border-radius: 4px;
-                padding: 3px 10px;
-            """)
+            bg = "#451a03" if is_dark else "#fef3c7"
+            fg = colors["status_warning"]
+
+        self.summary_badge.setStyleSheet(f"""
+            background-color: {bg};
+            color: {fg};
+            border: 1px solid {fg};
+            border-radius: 4px;
+            padding: 3px 10px;
+        """)
 
     def _on_autotest_error(self, err_tuple):
         self.retest_btn.setEnabled(True)

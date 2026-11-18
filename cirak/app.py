@@ -116,13 +116,21 @@ def main():
     from PySide6.QtWidgets import QApplication
     from cirak.gui.theme import ThemeManager
     from cirak.gui.main_window import MainWindow
+    from cirak.backend.lldp_cdp import LLDPCdpTest
+    from cirak.backend.settings_manager import SettingsManager
+
+    # Start continuous L2 background sniffer for 60s Cisco CDP / LLDP / 802.1X NAC frames
+    if not args.simulate:
+        LLDPCdpTest.ensure_background_listener(active_iface)
 
     app = QApplication(sys.argv)
     app.setApplicationName("Ç.I.R.A.K.")
     app.setApplicationVersion(__version__)
 
-    # Set theme
-    ThemeManager.set_theme(args.theme)
+    # Load saved theme from persistent settings unless --theme was explicitly passed on CLI
+    saved_theme = SettingsManager(simulate=args.simulate).settings.theme
+    initial_theme = args.theme if "--theme" in sys.argv else (saved_theme or config.THEME_DARK)
+    ThemeManager.set_theme(initial_theme)
 
     window = MainWindow(show_boot=not args.no_boot)
 
@@ -132,6 +140,7 @@ def main():
         window.show()
 
     sys.exit(app.exec())
+
 
 
 if __name__ == "__main__":

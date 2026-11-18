@@ -147,12 +147,20 @@ class MainWindow(QMainWindow):
         self.apply_theme()
 
     def apply_theme(self):
-        """Re-render entire application stylesheet and notify child views."""
+        """Re-render entire application stylesheet and notify all child views and bars."""
         stylesheet = ThemeManager.get_stylesheet()
         QApplication.instance().setStyleSheet(stylesheet)
-        self.top_bar.update_logo()
-        self.boot_screen.update_logo()
+        self.top_bar.update_theme()
+        self.bottom_bar.update_theme()
+        self.boot_screen.update_theme()
         self.main_menu.update_theme()
+        self.autotest_view.update_theme()
+        self.discovery_view.update_theme()
+        self.rogue_view.update_theme()
+        self.speed_view.update_theme()
+        self.wifi_view.update_theme()
+        self.settings_view.update_theme()
+
 
     def _poll_network_telemetry(self):
         """Poll real network hardware status and update bars."""

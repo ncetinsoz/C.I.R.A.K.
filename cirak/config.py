@@ -12,9 +12,10 @@ IMAGES_DIR = ASSETS_DIR / "images"
 DOCS_DIR = BASE_DIR / "docs"
 
 # Official Logos
-LOGO_PATH = IMAGES_DIR / "cirak_logo.png"
-LOGO_LIGHT_PATH = IMAGES_DIR / "cirak_logo.png"
 LOGO_DARK_PATH = IMAGES_DIR / "cirak_logo_dark.jpg"
+LOGO_LIGHT_PATH = IMAGES_DIR / "cirak_logo.png"
+LOGO_PATH = LOGO_DARK_PATH
+
 
 # Display & Layout Specifications (800x480 Fixed Touch Resolution)
 SCREEN_WIDTH = 800

@@ -58,15 +58,22 @@ def test_main_window_initialization(qapp):
 
 
 def test_theme_toggle_smoke(qapp):
+    ThemeManager.set_theme(config.THEME_DARK)
     window = MainWindow(show_boot=False)
-    initial_theme = ThemeManager.get_current_theme()
+    assert ThemeManager.get_current_theme() == config.THEME_DARK
+    assert "#0f172a" in window.discovery_view.switch_panel.styleSheet()
 
-    # Toggle
+    # Toggle to Light Mode and verify all inner views update their stylesheets
     new_theme = ThemeManager.toggle_theme()
-    assert new_theme != initial_theme
+    assert new_theme == config.THEME_LIGHT
     window.apply_theme()
+    assert "#e2e8f0" in window.discovery_view.switch_panel.styleSheet()
+    assert "#e2e8f0" in window.settings_view.card_ip.styleSheet()
 
-    # Toggle back
+    # Toggle back to Dark Mode
     restored_theme = ThemeManager.toggle_theme()
-    assert restored_theme == initial_theme
+    assert restored_theme == config.THEME_DARK
     window.apply_theme()
+    assert "#0f172a" in window.discovery_view.switch_panel.styleSheet()
+    assert window.top_bar.power_btn is not None
+

@@ -217,18 +217,44 @@ class NetworkDetector:
                 pass
         return servers
 
-    @staticmethod
-    def identify_mac_vendor(mac: str) -> Tuple[str, bool]:
+    _oui_cache: Dict[str, str] = {}
+
+    @classmethod
+    def identify_mac_vendor(cls, mac: str) -> Tuple[str, bool]:
         """
         Identify hardware manufacturer from MAC OUI prefix.
+        Uses built-in enterprise/consumer tables AND system IEEE OUI databases
+        (/usr/share/arp-scan/ieee-oui.txt, /usr/share/ieee-data/oui.txt).
         Returns (vendor_name, is_unauthorized_consumer_device).
         """
         if not mac or len(mac) < 8:
             return "Bilinmeyen Üretici", False
 
-        oui = mac.lower().replace(":", "").replace("-", "")[:6]
+        oui = mac.lower().replace(":", "").replace("-", "").replace(".", "")[:6]
+        if len(oui) < 6:
+            return "Bilinmeyen Üretici", False
 
-        # Enterprise / Managed Network Vendors
+        # 1. Consumer / Unauthorized Desktop Switch & Router Vendors
+        consumer_ouis = {
+            "c4ad34": "TP-Link (Tüketici/Masaüstü)",
+            "50c7bf": "TP-Link (Tüketici/Masaüstü)",
+            "18a6f7": "TP-Link (Tüketici/Masaüstü)",
+            "e8de27": "TP-Link (Tüketici/Masaüstü)",
+            "f4f26d": "TP-Link (Tüketici/Masaüstü)",
+            "c83a35": "Tenda Technology (Yetkisiz Cihaz)",
+            "b0df3a": "Tenda Technology (Yetkisiz Cihaz)",
+            "001b11": "D-Link (Masaüstü Switch/Modem)",
+            "1cbdb9": "D-Link (Masaüstü Switch/Modem)",
+            "50ff20": "Keenetic / Zyxel (Modem/Router)",
+            "588bf3": "Zyxel Communications",
+            "286c07": "Xiaomi (Tüketici Router)",
+            "04d9f5": "ASUS (Tüketici Router)",
+            "9c5322": "Mercusys (Masaüstü Switch)",
+        }
+        if oui in consumer_ouis:
+            return consumer_ouis[oui], True
+
+        # 2. Fast Built-in Enterprise Network Vendors
         enterprise_ouis = {
             "00000c": "Cisco Systems",
             "001ebd": "Cisco Systems",
@@ -242,7 +268,36 @@ class NetworkDetector:
             "70df2f": "Cisco Systems",
             "b0aa77": "Cisco Systems",
             "f872ea": "Cisco Systems",
-            "d8b190": "Cisco Meraki / Catalyst",
+            "d8b190": "Cisco Systems",
+            "0017df": "Cisco Systems",
+            "001906": "Cisco Systems",
+            "001d71": "Cisco Systems",
+            "002155": "Cisco Systems",
+            "002290": "Cisco Systems",
+            "002699": "Cisco Systems",
+            "0026cb": "Cisco Systems",
+            "04dad2": "Cisco Systems",
+            "10f311": "Cisco Systems",
+            "189c5d": "Cisco Systems",
+            "203a07": "Cisco Systems",
+            "34dbfe": "Cisco Systems",
+            "3cecef": "Cisco Systems",
+            "44ad08": "Cisco Systems",
+            "5475d0": "Cisco Systems",
+            "58ac78": "Cisco Systems",
+            "64f69d": "Cisco Systems",
+            "70105c": "Cisco Systems",
+            "74a02f": "Cisco Systems",
+            "84b802": "Cisco Systems",
+            "88f031": "Cisco Systems",
+            "a0f849": "Cisco Systems",
+            "acf2c5": "Cisco Systems",
+            "c0626b": "Cisco Systems",
+            "c80084": "Cisco Systems",
+            "dcd2fc": "Cisco Systems",
+            "e4c722": "Cisco Systems",
+            "f07f06": "Cisco Systems",
+            "f4cfe2": "Cisco Systems",
             "001a1e": "Aruba / HPE",
             "204c03": "Aruba / HPE",
             "3821c7": "Aruba / HPE",
@@ -263,26 +318,37 @@ class NetworkDetector:
         if oui in enterprise_ouis:
             return enterprise_ouis[oui], False
 
-        # Consumer / Unauthorized Desktop Switch & Router Vendors
-        consumer_ouis = {
-            "c4ad34": "TP-Link (Tüketici/Masaüstü)",
-            "50c7bf": "TP-Link (Tüketici/Masaüstü)",
-            "18a6f7": "TP-Link (Tüketici/Masaüstü)",
-            "e8de27": "TP-Link (Tüketici/Masaüstü)",
-            "c83a35": "Tenda Technology (Yetkisiz Cihaz)",
-            "b0df3a": "Tenda Technology (Yetkisiz Cihaz)",
-            "001b11": "D-Link (Masaüstü Switch/Modem)",
-            "1cbdb9": "D-Link (Masaüstü Switch/Modem)",
-            "50ff20": "Keenetic / Zyxel (Modem/Router)",
-            "588bf3": "Zyxel Communications",
-            "286c07": "Xiaomi (Tüketici Router)",
-            "04d9f5": "ASUS (Tüketici Router)",
-            "9c5322": "Mercusys (Masaüstü Switch)",
-        }
-        if oui in consumer_ouis:
-            return consumer_ouis[oui], True
+        if oui in cls._oui_cache:
+            v = cls._oui_cache[oui]
+            is_unauth = any(k in v.lower() for k in ("tp-link", "tenda", "d-link", "mercusys", "xiaomi"))
+            return v, is_unauth
 
-        return "Standart Ağ Cihazı", False
+        # 3. Search Linux System IEEE OUI Databases (/usr/share/arp-scan/ieee-oui.txt, etc.)
+        oui_upper = oui.upper()
+        oui_dashed = f"{oui_upper[0:2]}-{oui_upper[2:4]}-{oui_upper[4:6]}"
+        oui_files = [
+            Path("/usr/share/arp-scan/ieee-oui.txt"),
+            Path("/usr/share/ieee-data/oui.txt"),
+            Path("/var/lib/ieee-data/oui.txt"),
+            Path("/usr/share/nmap/nmap-mac-prefixes"),
+        ]
+        for fpath in oui_files:
+            if fpath.exists():
+                try:
+                    for line in fpath.read_text(errors="ignore").splitlines():
+                        if line.startswith(oui_upper) or line.startswith(oui_dashed):
+                            parts = line.split(None, 1)
+                            if len(parts) == 2:
+                                vendor_raw = parts[1].replace("(hex)", "").replace("(base 16)", "").strip()
+                                if "cisco" in vendor_raw.lower():
+                                    vendor_raw = "Cisco Systems"
+                                cls._oui_cache[oui] = vendor_raw[:32]
+                                is_unauth = any(k in vendor_raw.lower() for k in ("tp-link", "tenda", "d-link", "mercusys", "xiaomi"))
+                                return cls._oui_cache[oui], is_unauth
+                except Exception:
+                    continue
+
+        return "Kurumsal Ağ Cihazı", False
 
     @classmethod
     def get_lldp_from_daemon(cls, iface: Optional[str] = None) -> Optional[Dict[str, Any]]:

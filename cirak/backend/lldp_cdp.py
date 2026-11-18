@@ -1,11 +1,14 @@
 """
-Layer 2: CDP (Cisco Discovery Protocol v1/v2), LLDP (IEEE 802.1AB), and STP/L2 Switch Analyzer.
-Discovers switch hostname, platform/model, port ID, VLAN tag, management IP,
-and detects unmanaged or unauthorized consumer switches on the network.
+Layer 2: CDP (Cisco Discovery Protocol v1/v2), LLDP (IEEE 802.1AB), 802.1X NAC (EAPOL), and PVST+/STP Analyzer.
+Features a continuous background L2 promiscuous sniffer so 60-second Cisco CDP beacons
+and NAC-delayed port announcements are captured immediately without missing frames.
 """
 
+import shutil
 import socket
 import struct
+import subprocess
+import threading
 import time
 from typing import Optional, Dict, Any
 from cirak.backend.base import BaseTest
@@ -14,15 +17,200 @@ from cirak.core.models import TestResult, TestStatus, LLDPInfo
 
 
 class LLDPCdpTest(BaseTest):
-    """Listens for CDP, LLDP, and STP BPDU frames or queries lldpd daemon."""
+    """Listens for CDP, LLDP, 802.1X EAPOL, and PVST+/STP BPDU frames with continuous background caching."""
 
-    def __init__(self, interface: Optional[str] = None, timeout_sec: float = 2.5, simulate: bool = False):
+    # Class-level continuous cache per interface so 60s CDP frames are never missed
+    _bg_lock = threading.Lock()
+    _bg_started = False
+    _cached_cdp_lldp: Dict[str, LLDPInfo] = {}
+    _cached_stp_nac: Dict[str, LLDPInfo] = {}
+    _nac_active_ifaces: Dict[str, float] = {}
+    _last_carrier_state: Dict[str, bool] = {}
+
+    def __init__(self, interface: Optional[str] = None, timeout_sec: float = 3.0, simulate: bool = False):
         iface = interface or NetworkDetector.get_active_interface()
         super().__init__(name="2. Switch & Port (CDP/LLDP)", interface=iface, simulate=simulate)
         self.timeout_sec = timeout_sec
+        if not simulate:
+            self.ensure_background_listener(iface)
+
+    @classmethod
+    def ensure_background_listener(cls, iface: str = "eth0"):
+        """Start lightweight background L2 sniffer thread once to catch 60s CDP beacons continuously."""
+        with cls._bg_lock:
+            if cls._bg_started:
+                return
+            cls._bg_started = True
+            t = threading.Thread(target=cls._background_sniffer_loop, args=(iface,), daemon=True)
+            t.start()
+
+    @classmethod
+    def get_cached_discovery(cls, iface: str = "eth0", max_age_sec: float = 180.0) -> Optional[Dict[str, Any]]:
+        """Return latest full CDP/LLDP or NAC/STP telemetry from background sniffer or lldpd."""
+        # 1. Check lldpd daemon first
+        daemon_data = NetworkDetector.get_lldp_from_daemon(iface)
+        if daemon_data and daemon_data.get("system_name"):
+            if iface in cls._nac_active_ifaces and (time.time() - cls._nac_active_ifaces[iface] < 120):
+                daemon_data["protocol"] = f"{daemon_data.get('protocol', 'CDP')} + 802.1X NAC"
+                daemon_data["nac_active"] = True
+            return daemon_data
+
+        # 2. Check our continuous raw socket CDP/LLDP cache
+        with cls._bg_lock:
+            info = cls._cached_cdp_lldp.get(iface)
+            if info and (time.time() - info.received_at < max_age_sec):
+                d = dict(info.__dict__)
+                if iface in cls._nac_active_ifaces and (time.time() - cls._nac_active_ifaces[iface] < 120):
+                    if "NAC" not in d.get("protocol", ""):
+                        d["protocol"] = f"{d.get('protocol', 'CDP')} + 802.1X NAC"
+                    d["nac_active"] = True
+                return d
+
+            # 3. Check NAC / PVST+ cache if full CDP hasn't arrived yet
+            stp_info = cls._cached_stp_nac.get(iface)
+            if stp_info and (time.time() - stp_info.received_at < min(max_age_sec, 90.0)):
+                d = dict(stp_info.__dict__)
+                if "NAC" in d.get("protocol", "") or iface in cls._nac_active_ifaces:
+                    d["nac_active"] = True
+                return d
+
+        return None
+
+    @classmethod
+    def _background_sniffer_loop(cls, default_iface: str):
+        """Continuously listen for L2 multicast frames (CDP, LLDP, 802.1X EAPOL, PVST+ BPDU)."""
+        parser_helper = cls(interface=default_iface, simulate=True)
+        while True:
+            iface = NetworkDetector.get_active_interface() or default_iface
+            carrier = NetworkDetector.get_carrier(iface)
+
+            # Reset cache when cable is unplugged or moved to another switch port!
+            prev_carrier = cls._last_carrier_state.get(iface, False)
+            cls._last_carrier_state[iface] = carrier
+            if not carrier:
+                with cls._bg_lock:
+                    cls._cached_cdp_lldp.pop(iface, None)
+                    cls._cached_stp_nac.pop(iface, None)
+                    cls._nac_active_ifaces.pop(iface, None)
+                time.sleep(1.0)
+                continue
+
+            if carrier and not prev_carrier:
+                # Cable just plugged in! Trigger lldpd update to solicit neighbor response
+                cls._trigger_l2_solicitation(iface)
+
+            sock = None
+            try:
+                ETH_P_ALL = 3
+                sock = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.ntohs(ETH_P_ALL))
+                sock.bind((iface, 0))
+                sock.settimeout(2.0)
+
+                # Enable PACKET_MR_PROMISC so Broadcom NIC passes all L2 multicast frames
+                try:
+                    if_idx = socket.if_nametoindex(iface)
+                    mreq = struct.pack("IHH8s", if_idx, 1, 0, b"\x00" * 8)
+                    sock.setsockopt(263, 1, mreq)
+                except Exception:
+                    pass
+
+                session_end = time.time() + 30.0
+                while time.time() < session_end and NetworkDetector.get_carrier(iface):
+                    try:
+                        packet, _ = sock.recvfrom(2048)
+                    except socket.timeout:
+                        continue
+                    parser_helper._process_raw_packet(iface, packet)
+            except Exception:
+                time.sleep(2.0)
+            finally:
+                if sock:
+                    try:
+                        sock.close()
+                    except Exception:
+                        pass
+
+    @staticmethod
+    def _trigger_l2_solicitation(iface: str):
+        """Nudge lldpd to transmit an immediate LLDP/CDP announcement on link-up."""
+        if shutil.which("lldpcli"):
+            for prefix in ([], ["sudo", "-n"]):
+                try:
+                    subprocess.run(
+                        prefix + ["lldpcli", "update"],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        timeout=1.5,
+                    )
+                    break
+                except Exception:
+                    continue
+
+    def _process_raw_packet(self, iface: str, packet: bytes) -> Optional[LLDPInfo]:
+        """Inspect a raw L2 Ethernet frame for LLDP, CDP, 802.1X EAPOL, or PVST+/STP."""
+        if len(packet) < 14:
+            return None
+
+        dst_mac = packet[0:6]
+        src_mac = ":".join(f"{b:02x}" for b in packet[6:12])
+        eth_proto = struct.unpack("!H", packet[12:14])[0]
+        payload_offset = 14
+        dot1q_vlan: Optional[int] = None
+
+        # Unwrap IEEE 802.1Q VLAN tag (0x8100)
+        if eth_proto == 0x8100 and len(packet) >= 18:
+            tci = struct.unpack("!H", packet[14:16])[0]
+            dot1q_vlan = tci & 0x0FFF
+            eth_proto = struct.unpack("!H", packet[16:18])[0]
+            payload_offset = 18
+
+        payload = packet[payload_offset:]
+
+        # 1. IEEE 802.1AB LLDP (EtherType 0x88CC or dst 01:80:c2:00:00:0e)
+        if eth_proto == 0x88CC or dst_mac == b"\x01\x80\xc2\x00\x00\x0e":
+            info = self.parse_lldp_frame(payload, src_mac=src_mac, dot1q_vlan=dot1q_vlan)
+            if info:
+                with self._bg_lock:
+                    self._cached_cdp_lldp[iface] = info
+                return info
+
+        # 2. Cisco Discovery Protocol (CDP - Multicast 01:00:0c:cc:cc:cc)
+        elif dst_mac == b"\x01\x00\x0c\xcc\xcc\xcc":
+            info = self.parse_cdp_frame(payload, src_mac=src_mac, dot1q_vlan=dot1q_vlan)
+            if info:
+                with self._bg_lock:
+                    self._cached_cdp_lldp[iface] = info
+                return info
+
+        # 3. IEEE 802.1X Port-Based NAC / EAPOL (EtherType 0x888E or dst 01:80:c2:00:00:03)
+        elif eth_proto == 0x888E or dst_mac == b"\x01\x80\xc2\x00\x00\x03":
+            with self._bg_lock:
+                self._nac_active_ifaces[iface] = time.time()
+            nac_info = self.parse_eapol_nac_frame(payload, src_mac=src_mac, dot1q_vlan=dot1q_vlan)
+            if nac_info:
+                with self._bg_lock:
+                    # Only store in fallback cache; never overwrite full CDP/LLDP!
+                    existing = self._cached_stp_nac.get(iface)
+                    if existing and existing.vlan_id and not nac_info.vlan_id:
+                        nac_info.vlan_id = existing.vlan_id
+                    self._cached_stp_nac[iface] = nac_info
+            return None  # Return None so active sniffer continues waiting for full CDP/LLDP!
+
+        # 4. Spanning Tree BPDU (IEEE STP 01:80:c2:00:00:00 or Cisco PVST+ 01:00:0c:cc:cc:cd)
+        elif dst_mac in (b"\x01\x80\xc2\x00\x00\x00", b"\x01\x00\x0c\xcc\xcc\xcd"):
+            stp_info = self.parse_stp_bpdu(payload, src_mac=src_mac, dot1q_vlan=dot1q_vlan, is_pvst=(dst_mac == b"\x01\x00\x0c\xcc\xcc\xcd"))
+            if stp_info:
+                with self._bg_lock:
+                    if iface in self._nac_active_ifaces:
+                        stp_info.protocol = "802.1X NAC + PVST+"
+                        stp_info.system_description = "802.1X NAC Korumalı Port (CDP Periyodu Bekleniyor)"
+                    self._cached_stp_nac[iface] = stp_info
+            return None  # Continue waiting for full CDP/LLDP frame during timeout window
+
+        return None
 
     def run(self) -> TestResult:
-        """Run L2 switch discovery (CDP, LLDP, STP BPDU, and MAC OUI inspection)."""
+        """Run L2 switch discovery (CDP, LLDP, 802.1X NAC, PVST+ BPDU, and MAC OUI inspection)."""
         start_time = time.time()
 
         if self.simulate:
@@ -35,30 +223,33 @@ class LLDPCdpTest(BaseTest):
                 details=info.__dict__
             )
 
-        # 1. Query lldpd daemon directly (fastest, caches both CDP and LLDP packets)
-        daemon_data = NetworkDetector.get_lldp_from_daemon(self.interface)
-        if daemon_data and daemon_data.get("system_name"):
-            proto = daemon_data.get("protocol", "CDP/LLDP")
+        # 1. Check if lldpd daemon or background CDP/LLDP cache already has full switch details
+        cached = self.get_cached_discovery(self.interface)
+        if cached and cached.get("protocol", "").startswith(("CDP", "LLDP")):
+            proto = cached.get("protocol", "CDP/LLDP")
             summary = (
-                f"[{proto}] {daemon_data['system_name']} | Port: {daemon_data['port_id']} "
-                f"| VLAN: {daemon_data.get('vlan_id') or 'Untagged'}"
+                f"[{proto}] {cached['system_name']} | Port: {cached['port_id']} "
+                f"| VLAN: {cached.get('vlan_id') or 'Untagged'}"
             )
-            status = TestStatus.WARNING if daemon_data.get("is_unauthorized_switch") else TestStatus.PASSED
+            status = TestStatus.WARNING if cached.get("is_unauthorized_switch") else TestStatus.PASSED
             return self._create_result(
                 status=status,
                 start_time=start_time,
                 summary=summary,
-                details=daemon_data
+                details=cached
             )
 
-        # 2. Direct Raw Socket Sniffing (Promiscuous multicast capture for CDP, LLDP, and STP BPDU)
+        # 2. Trigger active solicitation and sniff raw socket for full CDP/LLDP
+        self._trigger_l2_solicitation(self.interface)
         info = self.capture_neighbor_info()
         if info and (info.system_name or info.port_id or info.chassis_id):
+            if self.interface in self._nac_active_ifaces and "NAC" not in info.protocol:
+                info.protocol = f"{info.protocol} + 802.1X NAC"
             summary = (
-                f"[{info.protocol}] {info.system_name or info.vendor} | Port: {info.port_id or 'Bilinmiyor'} "
+                f"[{info.protocol}] {info.system_name or info.vendor} | Port: {info.port_id or 'Bekleniyor'} "
                 f"| VLAN: {info.vlan_id or 'Untagged'}"
             )
-            status = TestStatus.WARNING if (info.is_unauthorized_switch or info.protocol == "STP-BPDU") else TestStatus.PASSED
+            status = TestStatus.WARNING if info.is_unauthorized_switch else TestStatus.PASSED
             return self._create_result(
                 status=status,
                 start_time=start_time,
@@ -115,19 +306,14 @@ class LLDPCdpTest(BaseTest):
         )
 
     def capture_neighbor_info(self) -> Optional[LLDPInfo]:
-        """Sniff for CDP (01:00:0c:cc:cc:cc), LLDP (01:80:c2:00:00:0e), or STP BPDU frames on raw socket."""
+        """Sniff for CDP, LLDP, 802.1X EAPOL, or PVST+/STP BPDU frames on raw socket."""
         sock = None
         try:
             ETH_P_ALL = 3
-            ETH_P_LLDP = 0x88CC
-            ETH_P_8021Q = 0x8100
-
             sock = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.ntohs(ETH_P_ALL))
             sock.bind((self.interface, 0))
-            sock.settimeout(min(self.timeout_sec, 1.0))
+            sock.settimeout(0.8)
 
-            # Enable PACKET_MR_PROMISC (SOL_PACKET=263, PACKET_ADD_MEMBERSHIP=1, PACKET_MR_PROMISC=1)
-            # Ensures Broadcom bcmgenet NIC passes multicast CDP (01:00:0c:cc:cc:cc) & LLDP frames to kernel
             try:
                 if_idx = socket.if_nametoindex(self.interface)
                 mreq = struct.pack("IHH8s", if_idx, 1, 0, b"\x00" * 8)
@@ -135,53 +321,32 @@ class LLDPCdpTest(BaseTest):
             except Exception:
                 pass
 
-            stp_fallback: Optional[LLDPInfo] = None
             deadline = time.time() + self.timeout_sec
-
             while time.time() < deadline:
                 if self.is_cancelled:
                     break
+                # Check if lldpd or background thread caught a full CDP/LLDP frame in the meantime
+                with self._bg_lock:
+                    cached = self._cached_cdp_lldp.get(self.interface)
+                    if cached and (time.time() - cached.received_at < 60):
+                        return cached
+
                 try:
                     packet, _ = sock.recvfrom(2048)
                 except socket.timeout:
                     continue
 
-                if len(packet) < 14:
-                    continue
+                full_info = self._process_raw_packet(self.interface, packet)
+                if full_info:
+                    return full_info
 
-                dst_mac = packet[0:6]
-                src_mac_bytes = packet[6:12]
-                src_mac = ":".join(f"{b:02x}" for b in src_mac_bytes)
-                eth_proto = struct.unpack("!H", packet[12:14])[0]
-                payload_offset = 14
-                dot1q_vlan: Optional[int] = None
+            # After full timeout, check daemon or fallback to NAC/PVST+ info if present
+            daemon_data = NetworkDetector.get_lldp_from_daemon(self.interface)
+            if daemon_data and daemon_data.get("system_name"):
+                return LLDPInfo(**{k: v for k, v in daemon_data.items() if k in LLDPInfo.__dataclass_fields__})
 
-                # Unwrap IEEE 802.1Q VLAN tag if present
-                if eth_proto == ETH_P_8021Q and len(packet) >= 18:
-                    tci = struct.unpack("!H", packet[14:16])[0]
-                    dot1q_vlan = tci & 0x0FFF
-                    eth_proto = struct.unpack("!H", packet[16:18])[0]
-                    payload_offset = 18
-
-                payload = packet[payload_offset:]
-
-                # 1. IEEE 802.1AB LLDP (EtherType 0x88CC or dst 01:80:c2:00:00:0e)
-                if eth_proto == ETH_P_LLDP or dst_mac == b"\x01\x80\xc2\x00\x00\x0e":
-                    info = self.parse_lldp_frame(payload, src_mac=src_mac, dot1q_vlan=dot1q_vlan)
-                    if info:
-                        return info
-
-                # 2. Cisco Discovery Protocol (CDP - Multicast 01:00:0c:cc:cc:cc)
-                elif dst_mac == b"\x01\x00\x0c\xcc\xcc\xcc":
-                    info = self.parse_cdp_frame(payload, src_mac=src_mac, dot1q_vlan=dot1q_vlan)
-                    if info:
-                        return info
-
-                # 3. Spanning Tree BPDU (IEEE STP 01:80:c2:00:00:00 or Cisco PVST+ 01:00:0c:cc:cc:cd)
-                elif dst_mac in (b"\x01\x80\xc2\x00\x00\x00", b"\x01\x00\x0c\xcc\xcc\xcd") and not stp_fallback:
-                    stp_fallback = self.parse_stp_bpdu(payload, src_mac=src_mac, dot1q_vlan=dot1q_vlan)
-
-            return stp_fallback
+            with self._bg_lock:
+                return self._cached_cdp_lldp.get(self.interface) or self._cached_stp_nac.get(self.interface)
         except Exception:
             return None
         finally:
@@ -266,7 +431,6 @@ class LLDPCdpTest(BaseTest):
                     return None
                 payload = payload[8:]
             elif len(payload) > 8 and payload[1] in (60, 120, 180):
-                # Fallback for synthetic test payloads that prepend 8 dummy bytes
                 payload = payload[8:]
 
             if len(payload) < 4:
@@ -322,29 +486,80 @@ class LLDPCdpTest(BaseTest):
                         info.port_description = dup
 
             vendor, is_unauth = NetworkDetector.identify_mac_vendor(info.chassis_id or src_mac)
-            info.vendor = vendor if vendor != "Standart Ağ Cihazı" else "Cisco Systems"
+            info.vendor = vendor if vendor != "Kurumsal Ağ Cihazı" else "Cisco Systems"
             info.is_unauthorized_switch = is_unauth
             return info if (info.system_name or info.port_id) else None
         except Exception:
             return None
 
-    def parse_stp_bpdu(
+    def parse_eapol_nac_frame(
         self,
         payload: bytes,
         src_mac: str = "",
         dot1q_vlan: Optional[int] = None
     ) -> Optional[LLDPInfo]:
-        """Extract switch MAC, vendor, and VLAN from Spanning Tree (STP / PVST+) BPDU when CDP/LLDP are disabled."""
+        """Parse IEEE 802.1X EAPOL frame emitted by NAC-enforced switch ports."""
         if not src_mac:
             return None
         vendor, is_unauth = NetworkDetector.identify_mac_vendor(src_mac)
         return LLDPInfo(
             chassis_id=src_mac,
-            system_name=f"Switch ({vendor})",
-            system_description="STP/PVST+ Aktif (CDP/LLDP Kapalı)",
-            port_id="STP Portu",
+            system_name=f"{vendor} Switch (NAC Aktif)",
+            system_description="802.1X Port Erişim Kontrolü (CDP Paketi Bekleniyor...)",
+            port_id="802.1X Denetiminde",
             vlan_id=dot1q_vlan,
-            protocol="STP-BPDU",
+            protocol="802.1X NAC",
+            vendor=vendor,
+            is_unauthorized_switch=is_unauth,
+        )
+
+    def parse_stp_bpdu(
+        self,
+        payload: bytes,
+        src_mac: str = "",
+        dot1q_vlan: Optional[int] = None,
+        is_pvst: bool = False
+    ) -> Optional[LLDPInfo]:
+        """
+        Extract switch MAC, vendor, Root/Bridge ID, and Cisco PVST+ Native VLAN ID from BPDU.
+        In Cisco PVST+ frames (01:00:0c:cc:cc:cd), the trailing 6-byte TLV (00:00:00:02:VLAN_HI:VLAN_LO)
+        carries the exact port VLAN ID even on 802.1X NAC restricted ports!
+        """
+        if not src_mac:
+            return None
+
+        vlan_id = dot1q_vlan
+        port_str = "STP Aktif (CDP Bekleniyor)"
+
+        # Extract Port ID and PVST+ PVID TLV if present
+        try:
+            # Standard 802.2 LLC (3 bytes) + BPDU header (35 bytes): Port ID is at LLC+29..31
+            if is_pvst and len(payload) >= 48:
+                # Cisco PVST+ SNAP (8 bytes) + 35-byte BPDU + PVID TLV (0x0000, len 0x0002, 2-byte VLAN = 49 bytes)
+                port_num = struct.unpack("!H", payload[8 + 29: 8 + 31])[0] & 0x00FF
+                if port_num > 0:
+                    port_str = f"Port #{port_num} (PVST+)"
+                idx = payload.rfind(b"\x00\x00\x00\x02")
+                if idx != -1 and idx + 6 <= len(payload):
+                    vlan_id = struct.unpack("!H", payload[idx + 4: idx + 6])[0]
+            elif len(payload) >= 38 and payload[:3] == b"\x42\x42\x03":
+                port_num = struct.unpack("!H", payload[3 + 29: 3 + 31])[0] & 0x00FF
+                if port_num > 0:
+                    port_str = f"Port #{port_num} (STP)"
+        except Exception:
+            pass
+
+        vendor, is_unauth = NetworkDetector.identify_mac_vendor(src_mac)
+        if is_pvst and vendor == "Kurumsal Ağ Cihazı":
+            vendor = "Cisco Systems"
+
+        return LLDPInfo(
+            chassis_id=src_mac,
+            system_name=f"{vendor} Switch",
+            system_description="PVST+/STP Aktif (60sn CDP Periyodu Bekleniyor)",
+            port_id=port_str,
+            vlan_id=vlan_id,
+            protocol="PVST+" if is_pvst else "STP-BPDU",
             vendor=vendor,
             is_unauthorized_switch=is_unauth,
         )
@@ -373,7 +588,6 @@ class LLDPCdpTest(BaseTest):
                     break
                 addr_bytes = val[offset:offset + addr_len]
                 offset += addr_len
-                # NLPID IPv4 (pt_type=1, proto=0xCC, addr_len=4)
                 if pt_type == 1 and proto == b"\xcc" and addr_len == 4:
                     return socket.inet_ntoa(addr_bytes)
         except Exception:

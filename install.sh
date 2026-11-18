@@ -173,6 +173,15 @@ for net_tool in iw arp-scan ethtool ip; do
 done
 echo -e "${GREEN}[OK]${NC} Python ve ağ araçlarına (iw, arp-scan, ethtool, ip) 'cap_net_raw,cap_net_admin+eip' verildi."
 
+# Dokunmatik ekrandan güvenli kapatma (poweroff/reboot) ve NTP/Ağ işlemleri için sudoers izni
+SUDOERS_FILE="/etc/sudoers.d/cirak-power"
+$SUDO_CMD bash -c "cat > ${SUDOERS_FILE}" <<EOF
+${ACTUAL_USER} ALL=(ALL) NOPASSWD: /usr/bin/systemctl poweroff, /usr/bin/systemctl reboot, /sbin/poweroff, /sbin/reboot, /usr/sbin/arp-scan, /usr/sbin/iw, /usr/sbin/rfkill, /usr/bin/timedatectl, /usr/sbin/lldpcli, /usr/sbin/ip, /usr/sbin/ethtool
+EOF
+$SUDO_CMD chmod 0440 "$SUDOERS_FILE"
+echo -e "${GREEN}[OK]${NC} Güvenli kapatma (poweroff/reboot) ve donanım komutları için sudoers yetkisi tanımlandı."
+
+
 # 6. Global CLI Başlatıcı (/usr/local/bin/cirak)
 echo -e "\n${CYAN}==> 5/6: CLI Başlatıcı Script Oluşturuluyor...${NC}"
 
