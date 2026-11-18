@@ -97,17 +97,11 @@ $SUDO_CMD DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recomme
 # 3. Arka Plan Ağ Servislerinin Yapılandırılması (Cisco CDP + IEEE LLDP)
 echo -e "\n${CYAN}==> 2/6: Arka Plan Ağ Servisleri (Cisco CDP & LLDP) Etkinleştiriliyor...${NC}"
 if systemctl list-unit-files | grep -q lldpd.service; then
-    # lldpd servisinin Cisco CDP (-c) ve EDP (-e) paketlerini dinlemesini sağla
-    if [ -f /etc/default/lldpd ]; then
-        if ! grep -q '^DAEMON_ARGS="-c' /etc/default/lldpd; then
-            echo 'DAEMON_ARGS="-c -e"' | $SUDO_CMD tee -a /etc/default/lldpd >/dev/null
-        fi
-    else
-        echo 'DAEMON_ARGS="-c -e"' | $SUDO_CMD tee /etc/default/lldpd >/dev/null
-    fi
+    # lldpd servisinin sadece pasif dinleme (-r: receive-only) modunda Cisco CDP (-c) ve EDP (-e) paketlerini yakalamasını sağla
+    echo 'DAEMON_ARGS="-c -e -r"' | $SUDO_CMD tee /etc/default/lldpd >/dev/null
     $SUDO_CMD systemctl enable lldpd.service
     $SUDO_CMD systemctl restart lldpd.service
-    echo -e "${GREEN}[OK]${NC} lldpd servisi Cisco CDP (-c) ve LLDP desteğiyle aktif edildi."
+    echo -e "${GREEN}[OK]${NC} lldpd servisi pasif (receive-only) Cisco CDP (-c) ve LLDP desteğiyle aktif edildi."
 fi
 
 # Kablosuz ağ arayüzünü (wlan0) rfkill kilidinden çıkar ve aktif et

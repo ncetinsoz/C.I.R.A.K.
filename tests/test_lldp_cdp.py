@@ -100,3 +100,26 @@ def test_parse_eapol_nac_and_pvst_vlan():
     assert "PVST+" in stp_info.protocol
     assert "Cisco" in stp_info.vendor
 
+
+def test_ignore_local_cirak_self_packets():
+    from cirak.backend.network_detector import NetworkDetector
+
+    assert NetworkDetector.is_local_device(system_name="cirak") is True
+    assert NetworkDetector.is_local_device(system_name="CIRAK.local") is True
+    assert NetworkDetector.is_local_device(system_name="DEU-SW-CORE1") is False
+
+    test = LLDPCdpTest(simulate=True)
+    # Build an Ethernet LLDP frame advertising 'cirak' (local host)
+    dst_mac = b"\x01\x80\xc2\x00\x00\x0e"
+    src_mac = b"\xdc\xa6\x32\x11\x22\x33"
+    eth_type = struct.pack("!H", 0x88CC)
+    tlv1 = struct.pack("!H", (1 << 9) | 7) + b"\x04\xdc\xa6\x32\x11\x22\x33"
+    tlv2 = struct.pack("!H", (2 << 9) | 5) + b"\x05eth0"
+    tlv5 = struct.pack("!H", (5 << 9) | 5) + b"cirak"
+    tlv0 = b"\x00\x00"
+    raw_pkt = dst_mac + src_mac + eth_type + tlv1 + tlv2 + tlv5 + tlv0
+
+    res = test._process_raw_packet("eth0", raw_pkt)
+    assert res is None
+
+

@@ -117,8 +117,11 @@ class LLDPCdpTest(BaseTest):
                 session_end = time.time() + 30.0
                 while time.time() < session_end and NetworkDetector.get_carrier(iface):
                     try:
-                        packet, _ = sock.recvfrom(2048)
+                        packet, addr = sock.recvfrom(2048)
                     except socket.timeout:
+                        continue
+                    # Ignore outgoing frames transmitted by local lldpd daemon (PACKET_OUTGOING == 4)
+                    if isinstance(addr, tuple) and len(addr) >= 3 and addr[2] == 4:
                         continue
                     parser_helper._process_raw_packet(iface, packet)
             except Exception:
@@ -132,27 +135,21 @@ class LLDPCdpTest(BaseTest):
 
     @staticmethod
     def _trigger_l2_solicitation(iface: str):
-        """Nudge lldpd to transmit an immediate LLDP/CDP announcement on link-up."""
-        if shutil.which("lldpcli"):
-            for prefix in ([], ["sudo", "-n"]):
-                try:
-                    subprocess.run(
-                        prefix + ["lldpcli", "update"],
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
-                        timeout=1.5,
-                    )
-                    break
-                except Exception:
-                    continue
+        """No-op passive mode: avoid triggering local lldpd self-broadcasts on the wire."""
+        return
 
     def _process_raw_packet(self, iface: str, packet: bytes) -> Optional[LLDPInfo]:
-        """Inspect a raw L2 Ethernet frame for LLDP, CDP, 802.1X EAPOL, or PVST+/STP."""
+        """Inspect a raw L2 Ethernet frame for LLDP, CDP, 802.1X EAPOL, or PVST+/STP (ignoring local 'cirak' frames)."""
         if len(packet) < 14:
             return None
 
         dst_mac = packet[0:6]
         src_mac = ":".join(f"{b:02x}" for b in packet[6:12])
+
+        # CRITICAL: Ignore frames originating from our own Raspberry Pi NIC
+        if NetworkDetector.is_local_device(mac_or_chassis=src_mac):
+            return None
+
         eth_proto = struct.unpack("!H", packet[12:14])[0]
         payload_offset = 14
         dot1q_vlan: Optional[int] = None
@@ -169,18 +166,30 @@ class LLDPCdpTest(BaseTest):
         # 1. IEEE 802.1AB LLDP (EtherType 0x88CC or dst 01:80:c2:00:00:0e)
         if eth_proto == 0x88CC or dst_mac == b"\x01\x80\xc2\x00\x00\x0e":
             info = self.parse_lldp_frame(payload, src_mac=src_mac, dot1q_vlan=dot1q_vlan)
-            if info:
+            if info and not NetworkDetector.is_local_device(
+                system_name=info.system_name,
+                mac_or_chassis=info.chassis_id or src_mac,
+                mgmt_ip=info.management_ip,
+                system_descr=info.system_description,
+            ):
                 with self._bg_lock:
                     self._cached_cdp_lldp[iface] = info
                 return info
+            return None
 
         # 2. Cisco Discovery Protocol (CDP - Multicast 01:00:0c:cc:cc:cc)
         elif dst_mac == b"\x01\x00\x0c\xcc\xcc\xcc":
             info = self.parse_cdp_frame(payload, src_mac=src_mac, dot1q_vlan=dot1q_vlan)
-            if info:
+            if info and not NetworkDetector.is_local_device(
+                system_name=info.system_name,
+                mac_or_chassis=info.chassis_id or src_mac,
+                mgmt_ip=info.management_ip,
+                system_descr=info.system_description,
+            ):
                 with self._bg_lock:
                     self._cached_cdp_lldp[iface] = info
                 return info
+            return None
 
         # 3. IEEE 802.1X Port-Based NAC / EAPOL (EtherType 0x888E or dst 01:80:c2:00:00:03)
         elif eth_proto == 0x888E or dst_mac == b"\x01\x80\xc2\x00\x00\x03":
@@ -189,12 +198,11 @@ class LLDPCdpTest(BaseTest):
             nac_info = self.parse_eapol_nac_frame(payload, src_mac=src_mac, dot1q_vlan=dot1q_vlan)
             if nac_info:
                 with self._bg_lock:
-                    # Only store in fallback cache; never overwrite full CDP/LLDP!
                     existing = self._cached_stp_nac.get(iface)
                     if existing and existing.vlan_id and not nac_info.vlan_id:
                         nac_info.vlan_id = existing.vlan_id
                     self._cached_stp_nac[iface] = nac_info
-            return None  # Return None so active sniffer continues waiting for full CDP/LLDP!
+            return None
 
         # 4. Spanning Tree BPDU (IEEE STP 01:80:c2:00:00:00 or Cisco PVST+ 01:00:0c:cc:cc:cd)
         elif dst_mac in (b"\x01\x80\xc2\x00\x00\x00", b"\x01\x00\x0c\xcc\xcc\xcd"):
@@ -205,7 +213,7 @@ class LLDPCdpTest(BaseTest):
                         stp_info.protocol = "802.1X NAC + PVST+"
                         stp_info.system_description = "802.1X NAC Korumalı Port (CDP Periyodu Bekleniyor)"
                     self._cached_stp_nac[iface] = stp_info
-            return None  # Continue waiting for full CDP/LLDP frame during timeout window
+            return None
 
         return None
 
@@ -332,8 +340,11 @@ class LLDPCdpTest(BaseTest):
                         return cached
 
                 try:
-                    packet, _ = sock.recvfrom(2048)
+                    packet, addr = sock.recvfrom(2048)
                 except socket.timeout:
+                    continue
+
+                if isinstance(addr, tuple) and len(addr) >= 3 and addr[2] == 4:
                     continue
 
                 full_info = self._process_raw_packet(self.interface, packet)

@@ -351,9 +351,68 @@ class NetworkDetector:
         return "Kurumsal Ağ Cihazı", False
 
     @classmethod
+    def get_local_mac_addresses(cls) -> set:
+        """Return lowercase MAC addresses of all local network interfaces (eth0, wlan0, etc.)."""
+        macs = set()
+        net_dir = Path("/sys/class/net")
+        if net_dir.exists():
+            for p in net_dir.iterdir():
+                addr_file = p / "address"
+                if addr_file.exists():
+                    try:
+                        m = addr_file.read_text().strip().lower()
+                        if m and m != "00:00:00:00:00:00":
+                            macs.add(m)
+                    except Exception:
+                        pass
+        return macs
+
+    @classmethod
+    def is_local_device(
+        cls,
+        system_name: str = "",
+        mac_or_chassis: str = "",
+        mgmt_ip: str = "",
+        system_descr: str = "",
+    ) -> bool:
+        """
+        Return True if an L2 LLDP/CDP frame or neighbor entry belongs to this local Ç.I.R.A.K.
+        Raspberry Pi itself (e.g., outgoing lldpd advertisements for 'cirak').
+        """
+        if system_name:
+            name_low = system_name.strip().lower()
+            local_host = socket.gethostname().strip().lower()
+            if (
+                name_low in ("cirak", "çırak", "c.i.r.a.k.", "localhost", "raspberrypi", local_host)
+                or name_low.startswith("cirak.")
+                or (local_host and name_low.startswith(local_host + "."))
+            ):
+                return True
+
+        if mac_or_chassis:
+            mac_low = mac_or_chassis.strip().lower()
+            if mac_low in cls.get_local_mac_addresses():
+                return True
+
+        if mgmt_ip:
+            local_cidr = cls.get_ip_address_cidr()
+            if local_cidr:
+                local_ip = local_cidr.split("/")[0].strip()
+                if mgmt_ip.strip() == local_ip:
+                    return True
+
+        if system_descr and "debian gnu/linux" in system_descr.lower() and "linux" in system_descr.lower():
+            # lldpd on Raspberry Pi advertises 'Debian GNU/Linux 12 (bookworm)...'
+            if not system_name or system_name.strip().lower() in ("cirak", socket.gethostname().strip().lower()):
+                return True
+
+        return False
+
+    @classmethod
     def get_lldp_from_daemon(cls, iface: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """
         Query system lldpd daemon via lldpctl for real switch neighbor details (supports both CDP and LLDP).
+        Automatically ignores any local self-advertisements ('cirak' / local MAC / local IP).
         """
         target_iface = iface or cls.get_active_interface()
         try:
@@ -368,17 +427,21 @@ class NetworkDetector:
                 data = json.loads(res.stdout)
                 lldp_node = data.get("lldp", {})
                 if_node = lldp_node.get("interface", {})
-                if isinstance(if_node, list) and if_node:
-                    if_node = if_node[0]
 
-                target_if = None
-                if isinstance(if_node, dict):
-                    target_if = if_node.get(target_iface) or (list(if_node.values())[0] if if_node else None)
+                if_entries = if_node if isinstance(if_node, list) else ([if_node] if isinstance(if_node, dict) else [])
+                candidates = []
+                for entry in if_entries:
+                    if not isinstance(entry, dict):
+                        continue
+                    val = entry.get(target_iface) or (list(entry.values())[0] if entry else None)
+                    if isinstance(val, list):
+                        candidates.extend(val)
+                    elif isinstance(val, dict):
+                        candidates.append(val)
 
-                if isinstance(target_if, list) and target_if:
-                    target_if = target_if[0]
-
-                if isinstance(target_if, dict):
+                for target_if in candidates:
+                    if not isinstance(target_if, dict):
+                        continue
                     via_proto = target_if.get("via", "CDP/LLDP")
                     chassis = target_if.get("chassis", {})
                     port = target_if.get("port", {})
@@ -388,7 +451,7 @@ class NetworkDetector:
                     if isinstance(chassis, dict) and "name" not in chassis and len(chassis) == 1:
                         first_key = list(chassis.keys())[0]
                         if isinstance(chassis[first_key], dict):
-                            inner = chassis[first_key]
+                            inner = dict(chassis[first_key])
                             inner.setdefault("name", first_key)
                             chassis = inner
 
@@ -417,6 +480,15 @@ class NetworkDetector:
                     chassis_descr = chassis.get("descr", "") if isinstance(chassis, dict) else ""
                     port_descr = port.get("descr", "") if isinstance(port, dict) else ""
                     vlan_name = vlan.get("name", "") if isinstance(vlan, dict) else ""
+
+                    # CRITICAL: Skip local Raspberry Pi ('cirak') self-advertisements!
+                    if cls.is_local_device(
+                        system_name=chassis_name,
+                        mac_or_chassis=chassis_id,
+                        mgmt_ip=str(mgmt_ip) if mgmt_ip else "",
+                        system_descr=chassis_descr,
+                    ):
+                        continue
 
                     vendor, is_unauth = cls.identify_mac_vendor(chassis_id)
 
