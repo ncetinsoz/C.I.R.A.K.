@@ -16,6 +16,8 @@ class WorkerSignals(QObject):
     error = Signal(tuple)        # (exctype, value, traceback.format_exc())
     result = Signal(object)      # result object
     progress = Signal(int)       # progress percentage (0..100)
+    step_started = Signal(int, str)      # (step_index, step_name)
+    step_done = Signal(int, object)      # (step_index, TestResult)
 
 
 class BaseWorker(QRunnable):

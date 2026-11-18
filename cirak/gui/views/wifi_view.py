@@ -186,10 +186,10 @@ class WiFiView(QWidget):
         self.rescan_btn.setText("Taranıyor...")
         self.ap_count_badge.setText("Havadaki paketler taranıyor...")
 
-        worker = BaseWorker(self.scanner.scan)
-        worker.signals.result.connect(self._on_scan_finished)
-        worker.signals.error.connect(self._on_scan_error)
-        QThreadPool.globalInstance().start(worker)
+        self._active_worker = BaseWorker(self.scanner.scan)
+        self._active_worker.signals.result.connect(self._on_scan_finished, Qt.QueuedConnection)
+        self._active_worker.signals.error.connect(self._on_scan_error, Qt.QueuedConnection)
+        QThreadPool.globalInstance().start(self._active_worker)
 
     def _on_scan_finished(self, report: WiFiScanReport):
         self.last_report = report
@@ -197,7 +197,11 @@ class WiFiView(QWidget):
         self.rescan_btn.setText("🔄 Yeniden Tara")
         self.ap_count_badge.setText(f"{report.total_aps} Erişim Noktası ({report.count_24ghz} @2.4G | {report.count_5ghz} @5G)")
 
-        self.lbl_channel_rec.setText(f"Önerilen 2.4G Kanalı: Kanal {report.best_24ghz_channel} (En az çakışma)")
+        if report.total_aps > 0:
+            self.lbl_channel_rec.setText(f"Önerilen 2.4G Kanalı: Kanal {report.best_24ghz_channel} (En az çakışma)")
+        else:
+            self.lbl_channel_rec.setText(report.status_message or "Wi-Fi Ağı Bulunamadı")
+
         if report.connected_ssid:
             self.lbl_connected.setText(f"Bağlı: {report.connected_ssid} ({report.connected_ip or 'IP Yok'})")
         else:

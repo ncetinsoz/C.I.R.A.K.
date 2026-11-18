@@ -333,13 +333,14 @@ class SpeedTestView(QWidget):
 
         def worker_task():
             def on_prog(msg: str, pct: int):
-                self.progress_bar.setValue(pct)
+                self._active_worker.signals.progress.emit(pct)
             return self.engine.run_test(on_progress=on_prog)
 
-        worker = BaseWorker(worker_task)
-        worker.signals.result.connect(self._on_test_finished)
-        worker.signals.error.connect(self._on_test_error)
-        QThreadPool.globalInstance().start(worker)
+        self._active_worker = BaseWorker(worker_task)
+        self._active_worker.signals.progress.connect(self.progress_bar.setValue, Qt.QueuedConnection)
+        self._active_worker.signals.result.connect(self._on_test_finished, Qt.QueuedConnection)
+        self._active_worker.signals.error.connect(self._on_test_error, Qt.QueuedConnection)
+        QThreadPool.globalInstance().start(self._active_worker)
 
     def _on_test_finished(self, report: DualSpeedTestReport):
         self.progress_bar.setValue(100)

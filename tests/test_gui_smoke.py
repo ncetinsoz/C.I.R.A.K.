@@ -30,8 +30,8 @@ def test_main_window_initialization(qapp):
     assert window.top_bar.height() == 40
     assert window.bottom_bar.height() == 42
 
-    # Check page stack (boot, main, autotest, discovery, rogue, speed, wifi)
-    assert window.stack.count() == 7
+    # Check page stack (boot, main, autotest, discovery, rogue, speed, wifi, settings)
+    assert window.stack.count() == 8
     assert window.stack.currentWidget() == window.main_menu
 
     # Test navigation
@@ -49,6 +49,9 @@ def test_main_window_initialization(qapp):
 
     window.show_page("wifi")
     assert window.stack.currentWidget() == window.wifi_view
+
+    window.show_page("settings")
+    assert window.stack.currentWidget() == window.settings_view
 
     window.show_page("main")
     assert window.stack.currentWidget() == window.main_menu

@@ -34,7 +34,7 @@ def test_autotest_full_chain_simulation():
 
     step_names = [s.name for s in report.steps]
     assert "1. Fiziksel Link" in step_names[0]
-    assert "2. Switch & Port (LLDP)" in step_names[1]
+    assert "2. Switch & Port (CDP/LLDP)" in step_names[1]
     assert "3. DHCP Sunucusu" in step_names[2]
     assert "4. Gateway Ping" in step_names[3]
     assert "5. DNS Çözümleme" in step_names[4]

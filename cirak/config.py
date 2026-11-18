@@ -32,23 +32,25 @@ DEFAULT_ETH_INTERFACE = "eth0"
 DEFAULT_WLAN_INTERFACE = "wlan0"
 DEFAULT_TIMEOUT_SEC = 4.0
 
-# Active Profile Defaults
+# Active Profile & System Defaults
 DEFAULT_PROFILE = "Kampus-Dinamik-DHCP"
 DEFAULT_DNS_TARGET = "google.com"
-FALLBACK_DNS_TARGET = "kampus.edu.tr"
-DEFAULT_EXTERNAL_URL = "http://connectivitycheck.gstatic.com/generate_204"
-ULAKBIM_EXTERNAL_URL = "http://ulakbim.tubitak.gov.tr"
+FALLBACK_DNS_TARGET = "deu.edu.tr"
+DEFAULT_EXTERNAL_URL = "http://www.google.com"
+INTERNAL_CAMPUS_URL = "http://www.deu.edu.tr"
+DEFAULT_NTP_SERVER = "time.deu.edu.tr"
+SETTINGS_FILE = Path.home() / ".config" / "cirak" / "settings.json"
 
 # Approved DHCP Servers (Whitelist for Rogue Detection)
 APPROVED_DHCP_SERVERS = [
+    "194.27.65.1",     # DEU Subnet Gateway / DHCP
+    "193.140.151.224", # DEU Core DHCP/DNS 1
+    "193.140.151.9",   # DEU Core DHCP/DNS 2
     "10.20.0.1",       # Central Campus DHCP 1
     "10.20.0.2",       # Central Campus DHCP 2
-    "192.168.1.1",     # Lab Gateway 1
-    "192.168.1.254",   # Lab Gateway 2
-    "192.168.0.1",     # Lab Gateway 3
 ]
 
-# Dual Theme Palette Definitions (Faithful to cirak_ui_prototype.html & Tailwind Dark Industrial)
+# Dual Theme Palette Definitions (Default: Dark Industrial)
 THEME_DARK = "dark"
 THEME_LIGHT = "light"
 
@@ -74,23 +76,23 @@ COLORS = {
         "bar_border": "#1e293b",
     },
     "light": {
-        "bg_main": "#f8fafc",         # Clean Slate White
-        "card_bg": "#ffffff",         # Pure White
-        "card_border": "#cbd5e1",     # Light Border
-        "card_hover": "#f1f5f9",      # Light Hover
-        "text_primary": "#0f172a",    # Dark Slate
-        "text_secondary": "#475569",  # Charcoal Muted
-        "text_muted": "#94a3b8",
-        "accent_cyan": "#0284c7",     # Deep Cyan
-        "accent_indigo": "#4f46e5",   # Deep Indigo
+        "bg_main": "#cbd5e1",         # Soft Slate-300 (Non-glare industrial grey)
+        "card_bg": "#e2e8f0",         # Soft Slate-200 (Zero pure-white eye strain)
+        "card_border": "#94a3b8",     # Muted Slate-400 border
+        "card_hover": "#cbd5e1",      # Soft Hover
+        "text_primary": "#0f172a",    # Dark Slate-900
+        "text_secondary": "#334155",  # Slate-700
+        "text_muted": "#475569",      # Slate-600
+        "accent_cyan": "#0369a1",     # Deep Ocean Blue
+        "accent_indigo": "#4338ca",   # Deep Indigo
         "accent_amber": "#b45309",    # Deep Amber
-        "accent_emerald": "#059669",  # Forest Emerald
-        "accent_sky": "#0284c7",      # Sky Blue
-        "accent_slate": "#475569",    # Slate
-        "status_success": "#059669",  # Forest Emerald
-        "status_error": "#dc2626",    # Deep Red
-        "status_warning": "#ca8a04",  # Deep Yellow
-        "bar_bg": "#ffffff",          # Top/Bottom bar background
-        "bar_border": "#e2e8f0",
+        "accent_emerald": "#047857",  # Deep Emerald
+        "accent_sky": "#0369a1",      # Deep Sky
+        "accent_slate": "#334155",    # Slate
+        "status_success": "#047857",  # Forest Emerald
+        "status_error": "#b91c1c",    # Deep Red
+        "status_warning": "#b45309",  # Deep Amber
+        "bar_bg": "#94a3b8",          # Soft Slate Top/Bottom bar
+        "bar_border": "#64748b",
     }
 }

@@ -94,13 +94,27 @@ SYSTEM_PACKAGES=(
 echo -e "${BLUE}[INFO]${NC} Paketler yükleniyor: ${SYSTEM_PACKAGES[*]}"
 $SUDO_CMD DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${SYSTEM_PACKAGES[@]}"
 
-# 3. Arka Plan Ağ Servislerinin Yapılandırılması
-echo -e "\n${CYAN}==> 2/6: Arka Plan Ağ Servisleri Etkinleştiriliyor...${NC}"
+# 3. Arka Plan Ağ Servislerinin Yapılandırılması (Cisco CDP + IEEE LLDP)
+echo -e "\n${CYAN}==> 2/6: Arka Plan Ağ Servisleri (Cisco CDP & LLDP) Etkinleştiriliyor...${NC}"
 if systemctl list-unit-files | grep -q lldpd.service; then
+    # lldpd servisinin Cisco CDP (-c) ve EDP (-e) paketlerini dinlemesini sağla
+    if [ -f /etc/default/lldpd ]; then
+        if ! grep -q '^DAEMON_ARGS="-c' /etc/default/lldpd; then
+            echo 'DAEMON_ARGS="-c -e"' | $SUDO_CMD tee -a /etc/default/lldpd >/dev/null
+        fi
+    else
+        echo 'DAEMON_ARGS="-c -e"' | $SUDO_CMD tee /etc/default/lldpd >/dev/null
+    fi
     $SUDO_CMD systemctl enable lldpd.service
     $SUDO_CMD systemctl restart lldpd.service
-    echo -e "${GREEN}[OK]${NC} lldpd servisi aktif edildi (LLDP/CDP dinleyici)."
+    echo -e "${GREEN}[OK]${NC} lldpd servisi Cisco CDP (-c) ve LLDP desteğiyle aktif edildi."
 fi
+
+# Kablosuz ağ arayüzünü (wlan0) rfkill kilidinden çıkar ve aktif et
+if command -v rfkill >/dev/null 2>&1; then
+    $SUDO_CMD rfkill unblock wifi 2>/dev/null || true
+fi
+$SUDO_CMD ip link set wlan0 up 2>/dev/null || true
 
 # Wireshark / TShark izinleri (root olmadan paket yakalama)
 if getent group wireshark >/dev/null; then
@@ -139,14 +153,20 @@ echo -e "${BLUE}[INFO]${NC} Python kütüphaneleri yükleniyor (PySide6, Scapy, 
 
 echo -e "${GREEN}[OK]${NC} Python bağımlılıkları başarıyla yüklendi."
 
-# 5. Linux Yetkilendirmeleri (Least Privilege - sudo'suz raw soketler)
+# 5. Linux Yetkilendirmeleri (Least Privilege - sudo'suz raw soketler ve Wi-Fi/Switch tarama)
 echo -e "\n${CYAN}==> 4/6: Linux Yetkilendirmeleri (Capabilities) Tanımlanıyor...${NC}"
 PYTHON_BIN="$VENV_DIR/bin/python3"
 REAL_PYTHON=$(readlink -f "$PYTHON_BIN")
 
-# Raw socket ve network admin yetkisi ver
+# Python ve alt ağ araçlarına cap_net_raw,cap_net_admin yetkisi ver (Wi-Fi iw scan, arp-scan, ethtool, ip)
 $SUDO_CMD setcap cap_net_raw,cap_net_admin+eip "$REAL_PYTHON"
-echo -e "${GREEN}[OK]${NC} ${REAL_PYTHON} dosyasına 'cap_net_raw,cap_net_admin+eip' yetkileri verildi."
+for net_tool in iw arp-scan ethtool ip; do
+    if command -v "$net_tool" >/dev/null 2>&1; then
+        TOOL_PATH=$(readlink -f "$(command -v "$net_tool")")
+        $SUDO_CMD setcap cap_net_raw,cap_net_admin+eip "$TOOL_PATH" 2>/dev/null || true
+    fi
+done
+echo -e "${GREEN}[OK]${NC} Python ve ağ araçlarına (iw, arp-scan, ethtool, ip) 'cap_net_raw,cap_net_admin+eip' verildi."
 
 # 6. Global CLI Başlatıcı (/usr/local/bin/cirak)
 echo -e "\n${CYAN}==> 5/6: CLI Başlatıcı Script Oluşturuluyor...${NC}"

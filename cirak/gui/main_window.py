@@ -23,6 +23,7 @@ from cirak.gui.views.discovery_view import DiscoveryView
 from cirak.gui.views.rogue_dhcp_view import RogueDHCPView
 from cirak.gui.views.speed_test_view import SpeedTestView
 from cirak.gui.views.wifi_view import WiFiView
+from cirak.gui.views.settings_view import SettingsView
 from cirak.gui.views.boot_screen import BootScreen
 
 
@@ -67,6 +68,7 @@ class MainWindow(QMainWindow):
         self.rogue_view = RogueDHCPView(self)
         self.speed_view = SpeedTestView(self)
         self.wifi_view = WiFiView(self)
+        self.settings_view = SettingsView(self)
 
         self.stack.addWidget(self.boot_screen)     # Index 0
         self.stack.addWidget(self.main_menu)       # Index 1
@@ -75,6 +77,7 @@ class MainWindow(QMainWindow):
         self.stack.addWidget(self.rogue_view)      # Index 4
         self.stack.addWidget(self.speed_view)      # Index 5
         self.stack.addWidget(self.wifi_view)       # Index 6
+        self.stack.addWidget(self.settings_view)   # Index 7
 
         # Navigation wiring
         self.boot_screen.boot_completed.connect(lambda: self.show_page("main"))
@@ -84,6 +87,9 @@ class MainWindow(QMainWindow):
         self.rogue_view.back_requested.connect(lambda: self.show_page("main"))
         self.speed_view.back_requested.connect(lambda: self.show_page("main"))
         self.wifi_view.back_requested.connect(lambda: self.show_page("main"))
+        self.settings_view.back_requested.connect(lambda: self.show_page("main"))
+        self.settings_view.theme_changed.connect(self._on_theme_changed)
+        self.settings_view.profile_updated.connect(self.top_bar.set_profile_name)
 
         # 3. Bottom Quick-Info Bar (42px)
         self.bottom_bar = BottomBar(self)
@@ -120,6 +126,8 @@ class MainWindow(QMainWindow):
             self.stack.setCurrentIndex(5)
         elif page_name == "wifi":
             self.stack.setCurrentIndex(6)
+        elif page_name == "settings":
+            self.stack.setCurrentIndex(7)
 
     def _on_navigate(self, dest: str):
         if dest == "autotest":
@@ -133,8 +141,7 @@ class MainWindow(QMainWindow):
         elif dest == "wifi":
             self.show_page("wifi")
         elif dest == "settings":
-            ThemeManager.toggle_theme()
-            self.apply_theme()
+            self.show_page("settings")
 
     def _on_theme_changed(self, theme_name: str):
         self.apply_theme()
@@ -144,7 +151,6 @@ class MainWindow(QMainWindow):
         stylesheet = ThemeManager.get_stylesheet()
         QApplication.instance().setStyleSheet(stylesheet)
         self.top_bar.update_logo()
-        self.top_bar.update_theme_icon()
         self.boot_screen.update_logo()
         self.main_menu.update_theme()
 

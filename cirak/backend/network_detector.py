@@ -217,10 +217,77 @@ class NetworkDetector:
                 pass
         return servers
 
+    @staticmethod
+    def identify_mac_vendor(mac: str) -> Tuple[str, bool]:
+        """
+        Identify hardware manufacturer from MAC OUI prefix.
+        Returns (vendor_name, is_unauthorized_consumer_device).
+        """
+        if not mac or len(mac) < 8:
+            return "Bilinmeyen Üretici", False
+
+        oui = mac.lower().replace(":", "").replace("-", "")[:6]
+
+        # Enterprise / Managed Network Vendors
+        enterprise_ouis = {
+            "00000c": "Cisco Systems",
+            "001ebd": "Cisco Systems",
+            "9433d8": "Cisco Systems",
+            "000c85": "Cisco Systems",
+            "001b54": "Cisco Systems",
+            "002497": "Cisco Systems",
+            "2c542d": "Cisco Systems",
+            "500604": "Cisco Systems",
+            "68bc0c": "Cisco Systems",
+            "70df2f": "Cisco Systems",
+            "b0aa77": "Cisco Systems",
+            "f872ea": "Cisco Systems",
+            "d8b190": "Cisco Meraki / Catalyst",
+            "001a1e": "Aruba / HPE",
+            "204c03": "Aruba / HPE",
+            "3821c7": "Aruba / HPE",
+            "002561": "ProCurve / HPE",
+            "2c233a": "HPE Networking",
+            "000585": "Juniper Networks",
+            "28c0da": "Juniper Networks",
+            "54e032": "Juniper Networks",
+            "000496": "Extreme Networks",
+            "00e02b": "Extreme Networks",
+            "001882": "Huawei Enterprise",
+            "487b6b": "Huawei Enterprise",
+            "000c42": "MikroTik",
+            "d4ca6d": "MikroTik",
+            "005056": "VMware Infrastructure",
+            "000c29": "VMware Infrastructure",
+        }
+        if oui in enterprise_ouis:
+            return enterprise_ouis[oui], False
+
+        # Consumer / Unauthorized Desktop Switch & Router Vendors
+        consumer_ouis = {
+            "c4ad34": "TP-Link (Tüketici/Masaüstü)",
+            "50c7bf": "TP-Link (Tüketici/Masaüstü)",
+            "18a6f7": "TP-Link (Tüketici/Masaüstü)",
+            "e8de27": "TP-Link (Tüketici/Masaüstü)",
+            "c83a35": "Tenda Technology (Yetkisiz Cihaz)",
+            "b0df3a": "Tenda Technology (Yetkisiz Cihaz)",
+            "001b11": "D-Link (Masaüstü Switch/Modem)",
+            "1cbdb9": "D-Link (Masaüstü Switch/Modem)",
+            "50ff20": "Keenetic / Zyxel (Modem/Router)",
+            "588bf3": "Zyxel Communications",
+            "286c07": "Xiaomi (Tüketici Router)",
+            "04d9f5": "ASUS (Tüketici Router)",
+            "9c5322": "Mercusys (Masaüstü Switch)",
+        }
+        if oui in consumer_ouis:
+            return consumer_ouis[oui], True
+
+        return "Standart Ağ Cihazı", False
+
     @classmethod
     def get_lldp_from_daemon(cls, iface: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """
-        Query system lldpd daemon via lldpctl for real switch neighbor details.
+        Query system lldpd daemon via lldpctl for real switch neighbor details (supports both CDP and LLDP).
         """
         target_iface = iface or cls.get_active_interface()
         try:
@@ -235,44 +302,71 @@ class NetworkDetector:
                 data = json.loads(res.stdout)
                 lldp_node = data.get("lldp", {})
                 if_node = lldp_node.get("interface", {})
-                target_if = if_node.get(target_iface) or (list(if_node.values())[0] if if_node else None)
+                if isinstance(if_node, list) and if_node:
+                    if_node = if_node[0]
 
-                if target_if:
+                target_if = None
+                if isinstance(if_node, dict):
+                    target_if = if_node.get(target_iface) or (list(if_node.values())[0] if if_node else None)
+
+                if isinstance(target_if, list) and target_if:
+                    target_if = target_if[0]
+
+                if isinstance(target_if, dict):
+                    via_proto = target_if.get("via", "CDP/LLDP")
                     chassis = target_if.get("chassis", {})
                     port = target_if.get("port", {})
                     vlan = target_if.get("vlan", {})
 
-                    chassis_name = chassis.get("name", "")
+                    # Handle case where chassis is nested under system name key
+                    if isinstance(chassis, dict) and "name" not in chassis and len(chassis) == 1:
+                        first_key = list(chassis.keys())[0]
+                        if isinstance(chassis[first_key], dict):
+                            inner = chassis[first_key]
+                            inner.setdefault("name", first_key)
+                            chassis = inner
+
+                    chassis_name = chassis.get("name", "") if isinstance(chassis, dict) else ""
                     chassis_id = ""
-                    if isinstance(chassis.get("id"), dict):
-                        chassis_id = chassis["id"].get("value", "")
-                    elif isinstance(chassis.get("id"), str):
-                        chassis_id = chassis["id"]
+                    if isinstance(chassis, dict):
+                        if isinstance(chassis.get("id"), dict):
+                            chassis_id = chassis["id"].get("value", "")
+                        elif isinstance(chassis.get("id"), str):
+                            chassis_id = chassis["id"]
 
                     port_id = ""
-                    if isinstance(port.get("id"), dict):
-                        port_id = port["id"].get("value", "")
-                    elif isinstance(port.get("id"), str):
-                        port_id = port["id"]
+                    if isinstance(port, dict):
+                        if isinstance(port.get("id"), dict):
+                            port_id = port["id"].get("value", "")
+                        elif isinstance(port.get("id"), str):
+                            port_id = port["id"]
 
+                    if isinstance(vlan, list) and vlan:
+                        vlan = vlan[0]
                     vlan_id = vlan.get("vlan-id") if isinstance(vlan, dict) else None
-                    mgmt_ip = chassis.get("mgmt-ip", "")
+                    mgmt_ip = chassis.get("mgmt-ip", "") if isinstance(chassis, dict) else ""
+                    if isinstance(mgmt_ip, list) and mgmt_ip:
+                        mgmt_ip = mgmt_ip[0]
 
-                    chassis_descr = chassis.get("descr", "")
-                    port_descr = port.get("descr", "")
+                    chassis_descr = chassis.get("descr", "") if isinstance(chassis, dict) else ""
+                    port_descr = port.get("descr", "") if isinstance(port, dict) else ""
                     vlan_name = vlan.get("name", "") if isinstance(vlan, dict) else ""
+
+                    vendor, is_unauth = cls.identify_mac_vendor(chassis_id)
 
                     if chassis_name or port_id:
                         return {
-                            "system_name": chassis_name or "Switch",
+                            "system_name": chassis_name or "Anahtarlama Cihazı",
                             "system_description": chassis_descr,
-                            "port_id": port_id or "Gi1/0/1",
+                            "port_id": port_id or "Bilinmiyor",
                             "port_description": port_descr,
                             "vlan_id": vlan_id,
                             "vlan_name": vlan_name,
-                            "management_ip": mgmt_ip,
+                            "management_ip": str(mgmt_ip) if mgmt_ip else "",
                             "chassis_id": chassis_id,
-                            "protocol": "LLDP/CDP",
+                            "protocol": str(via_proto).upper(),
+                            "vendor": vendor,
+                            "is_unauthorized_switch": is_unauth,
                         }
         except Exception:
             pass

@@ -291,7 +291,7 @@ class AutoTestView(QWidget):
         cards_grid.setContentsMargins(0, 0, 0, 0)
 
         self.card_l1 = AutoTestStepCard(1, "Fiziksel Link")
-        self.card_l2 = AutoTestStepCard(2, "Switch & Port (LLDP)")
+        self.card_l2 = AutoTestStepCard(2, "Switch & Port (CDP/LLDP)")
         self.card_l3 = AutoTestStepCard(3, "DHCP Sunucusu")
         self.card_l4 = AutoTestStepCard(4, "Gateway Ping")
         self.card_l5 = AutoTestStepCard(5, "DNS Çözümleme")
@@ -355,7 +355,7 @@ class AutoTestView(QWidget):
         main_layout.addWidget(footer)
 
     def start_autotest(self):
-        """Execute real network diagnostic suite on background thread."""
+        """Execute real network diagnostic suite on background thread safely via Qt Signals."""
         self.retest_btn.setEnabled(False)
         self.summary_badge.setText("TEST BAŞLATILDI...")
         self.summary_badge.setStyleSheet("""
@@ -367,21 +367,24 @@ class AutoTestView(QWidget):
         """)
         self.progress_bar.setValue(0)
 
-        # Reset all cards to waiting state
+        # Reset all cards to waiting state on main GUI thread
         for c in self.cards:
             c.reset_card()
 
-        # Run REAL hardware test by default!
-        self.runner = AutoTestRunner(
-            simulate=False,
-            on_step_start=self._on_step_started,
-            on_step_done=self._on_step_completed,
-        )
+        def _execute_suite():
+            self.runner = AutoTestRunner(
+                simulate=False,
+                on_step_start=lambda idx, name: self._active_worker.signals.step_started.emit(idx, name),
+                on_step_done=lambda idx, res: self._active_worker.signals.step_done.emit(idx, res),
+            )
+            return self.runner.run_all()
 
-        worker = BaseWorker(self.runner.run_all)
-        worker.signals.result.connect(self._on_autotest_finished)
-        worker.signals.error.connect(self._on_autotest_error)
-        QThreadPool.globalInstance().start(worker)
+        self._active_worker = BaseWorker(_execute_suite)
+        self._active_worker.signals.step_started.connect(self._on_step_started, Qt.QueuedConnection)
+        self._active_worker.signals.step_done.connect(self._on_step_completed, Qt.QueuedConnection)
+        self._active_worker.signals.result.connect(self._on_autotest_finished, Qt.QueuedConnection)
+        self._active_worker.signals.error.connect(self._on_autotest_error, Qt.QueuedConnection)
+        QThreadPool.globalInstance().start(self._active_worker)
 
     def _on_step_started(self, idx: int, name: str):
         if 0 <= idx < len(self.cards):

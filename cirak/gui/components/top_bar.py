@@ -138,19 +138,10 @@ class TopBar(QFrame):
         self.clock_label.setFont(clock_font)
         self.clock_label.setStyleSheet("background: transparent; color: #f8fafc; font-weight: 700;")
 
-        # Theme Toggle Button (Compact 28x26 px)
-        self.theme_btn = QPushButton()
-        self.theme_btn.setFixedSize(28, 26)
-        self.theme_btn.setToolTip("Tema Değiştir (Aydınlık / Karanlık)")
-        self.theme_btn.setCursor(Qt.PointingHandCursor)
-        self.theme_btn.clicked.connect(self._on_theme_toggle_clicked)
-        self.update_theme_icon()
-
         right_box.addLayout(self.eth_box)
         right_box.addWidget(self.wifi_icon_label)
         right_box.addLayout(self.power_box)
         right_box.addWidget(self.clock_label)
-        right_box.addWidget(self.theme_btn)
 
         layout.addLayout(right_box)
 
@@ -190,17 +181,12 @@ class TopBar(QFrame):
         self.wifi_icon_label.setPixmap(pix)
 
     def update_theme_icon(self):
-        """Render clean moon/sun icon on theme button."""
-        is_dark = ThemeManager.get_current_theme() == config.THEME_DARK
-        pix = get_svg_pixmap("theme_toggle", color="#f8fafc" if is_dark else "#0f172a", size=16)
-        self.theme_btn.setIcon(pix)
+        """No-op kept for compatibility; theme selection moved to Settings view."""
+        pass
 
     def _update_clock(self):
         now = datetime.now().strftime("%H:%M:%S")
         self.clock_label.setText(now)
 
-    def _on_theme_toggle_clicked(self):
-        new_theme = ThemeManager.toggle_theme()
-        self.update_theme_icon()
-        self.update_logo()
-        self.theme_toggled.emit(new_theme)
+    def set_profile_name(self, name: str):
+        self.profile_val.setText(name)

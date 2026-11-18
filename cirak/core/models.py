@@ -53,15 +53,20 @@ class PhysicalLinkInfo:
 
 @dataclass
 class LLDPInfo:
-    """Layer 2: LLDP / CDP neighbor discovery info."""
+    """Layer 2: LLDP / CDP / L2 Switch neighbor discovery info."""
     chassis_id: str = ""
     system_name: str = ""
+    system_description: str = ""
     port_id: str = ""
     port_description: str = ""
     vlan_id: Optional[int] = None
+    vlan_name: str = ""
     management_ip: str = ""
     ttl: int = 120
-    protocol: str = "LLDP"  # "LLDP" or "CDP"
+    protocol: str = "CDP/LLDP"  # "CDP", "LLDP", "STP-BPDU", or "L2-MAC"
+    vendor: str = ""
+    capabilities: str = ""
+    is_unauthorized_switch: bool = False
     received_at: float = field(default_factory=time.time)
 
 
