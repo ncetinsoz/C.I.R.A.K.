@@ -167,6 +167,19 @@ class NetworkDetector:
         return None
 
     @staticmethod
+    def get_mac_address(interface: str = "eth0") -> Optional[str]:
+        """Read interface hardware MAC address from /sys/class/net/<iface>/address."""
+        try:
+            addr_file = Path(f"/sys/class/net/{interface}/address")
+            if addr_file.exists():
+                mac = addr_file.read_text().strip().lower()
+                if mac and mac != "00:00:00:00:00:00":
+                    return mac
+        except Exception:
+            pass
+        return None
+
+    @staticmethod
     def get_gateway_mac(gateway_ip: str) -> Optional[str]:
         """Read target IP's hardware MAC address from kernel ARP cache /proc/net/arp."""
         arp_file = Path("/proc/net/arp")
@@ -234,22 +247,63 @@ class NetworkDetector:
         if len(oui) < 6:
             return "Bilinmeyen Üretici", False
 
-        # 1. Consumer / Unauthorized Desktop Switch & Router Vendors
+        # 1. Consumer / SOHO / Unauthorized Desktop Switch & Router Vendors (Expanded TP-Link & SOHO OUIs)
         consumer_ouis = {
-            "c4ad34": "TP-Link (Tüketici/Masaüstü)",
-            "50c7bf": "TP-Link (Tüketici/Masaüstü)",
-            "18a6f7": "TP-Link (Tüketici/Masaüstü)",
-            "e8de27": "TP-Link (Tüketici/Masaüstü)",
-            "f4f26d": "TP-Link (Tüketici/Masaüstü)",
-            "c83a35": "Tenda Technology (Yetkisiz Cihaz)",
-            "b0df3a": "Tenda Technology (Yetkisiz Cihaz)",
-            "001b11": "D-Link (Masaüstü Switch/Modem)",
-            "1cbdb9": "D-Link (Masaüstü Switch/Modem)",
-            "50ff20": "Keenetic / Zyxel (Modem/Router)",
+            "c4ad34": "TP-Link Technologies",
+            "50c7bf": "TP-Link Technologies",
+            "18a6f7": "TP-Link Technologies",
+            "e8de27": "TP-Link Technologies",
+            "f4f26d": "TP-Link Technologies",
+            "001d0f": "TP-Link Technologies",
+            "0023cd": "TP-Link Technologies",
+            "002719": "TP-Link Technologies",
+            "10feed": "TP-Link Technologies",
+            "14cc20": "TP-Link Technologies",
+            "14cf92": "TP-Link Technologies",
+            "1c3bf3": "TP-Link Technologies",
+            "20dc56": "TP-Link Technologies",
+            "246968": "TP-Link Technologies",
+            "30b5c2": "TP-Link Technologies",
+            "34e894": "TP-Link Technologies",
+            "40ed00": "TP-Link Technologies",
+            "50d4f7": "TP-Link Technologies",
+            "54af97": "TP-Link Technologies",
+            "5c899a": "TP-Link Technologies",
+            "6032b1": "TP-Link Technologies",
+            "60e327": "TP-Link Technologies",
+            "6466b3": "TP-Link Technologies",
+            "647002": "TP-Link Technologies",
+            "6c5ab0": "TP-Link Technologies",
+            "74da38": "TP-Link Technologies",
+            "788cb5": "TP-Link Technologies",
+            "8416f9": "TP-Link Technologies",
+            "90f652": "TP-Link Technologies",
+            "98da24": "TP-Link Technologies",
+            "98dac4": "TP-Link Technologies",
+            "a0f3c1": "TP-Link Technologies",
+            "ac84c6": "TP-Link Technologies",
+            "b04e26": "TP-Link Technologies",
+            "b09575": "TP-Link Technologies",
+            "b0be76": "TP-Link Technologies",
+            "c025e9": "TP-Link Technologies",
+            "c04a00": "TP-Link Technologies",
+            "d46e0e": "TP-Link Technologies",
+            "d807b6": "TP-Link Technologies",
+            "d84732": "TP-Link Technologies",
+            "e4c32a": "TP-Link Technologies",
+            "ec086b": "TP-Link Technologies",
+            "ec172f": "TP-Link Technologies",
+            "f81a67": "TP-Link Technologies",
+            "f8d111": "TP-Link Technologies",
+            "c83a35": "Tenda Technology",
+            "b0df3a": "Tenda Technology",
+            "001b11": "D-Link Corporation",
+            "1cbdb9": "D-Link Corporation",
+            "50ff20": "Keenetic / Zyxel",
             "588bf3": "Zyxel Communications",
-            "286c07": "Xiaomi (Tüketici Router)",
-            "04d9f5": "ASUS (Tüketici Router)",
-            "9c5322": "Mercusys (Masaüstü Switch)",
+            "286c07": "Xiaomi Router",
+            "04d9f5": "ASUS Network",
+            "9c5322": "Mercusys (TP-Link)",
         }
         if oui in consumer_ouis:
             return consumer_ouis[oui], True
@@ -318,9 +372,14 @@ class NetworkDetector:
         if oui in enterprise_ouis:
             return enterprise_ouis[oui], False
 
+        consumer_keywords = (
+            "tp-link", "tplink", "tp link", "tenda", "d-link", "dlink",
+            "mercusys", "xiaomi", "keenetic", "zyxel", "netgear", "totolink", "cudy", "asus"
+        )
+
         if oui in cls._oui_cache:
             v = cls._oui_cache[oui]
-            is_unauth = any(k in v.lower() for k in ("tp-link", "tenda", "d-link", "mercusys", "xiaomi"))
+            is_unauth = any(k in v.lower() for k in consumer_keywords)
             return v, is_unauth
 
         # 3. Search Linux System IEEE OUI Databases (/usr/share/arp-scan/ieee-oui.txt, etc.)
@@ -340,15 +399,101 @@ class NetworkDetector:
                             parts = line.split(None, 1)
                             if len(parts) == 2:
                                 vendor_raw = parts[1].replace("(hex)", "").replace("(base 16)", "").strip()
-                                if "cisco" in vendor_raw.lower():
+                                v_low = vendor_raw.lower()
+                                if "cisco" in v_low:
                                     vendor_raw = "Cisco Systems"
+                                elif "tp-link" in v_low or "tplink" in v_low:
+                                    vendor_raw = "TP-Link Technologies"
                                 cls._oui_cache[oui] = vendor_raw[:32]
-                                is_unauth = any(k in vendor_raw.lower() for k in ("tp-link", "tenda", "d-link", "mercusys", "xiaomi"))
+                                is_unauth = any(k in v_low for k in consumer_keywords)
                                 return cls._oui_cache[oui], is_unauth
                 except Exception:
                     continue
 
         return "Kurumsal Ağ Cihazı", False
+
+    @classmethod
+    def extract_model_and_ios(cls, descr: str, sw_ver: str = "", vendor: str = "") -> Tuple[str, str]:
+        """
+        Separate hardware Model/Platform from OS/IOS Software Version string.
+        Handles lldpd's '<Platform> runs on <Software Version>' format as well as raw CDP/LLDP strings.
+        """
+        descr_clean = (descr or "").strip()
+        sw_clean = (sw_ver or "").strip()
+
+        raw_model = descr_clean
+        raw_sw = sw_clean
+
+        # lldpd formats CDP platform + version as: "cisco WS-C2960X-24TS-L runs on Cisco IOS Software..."
+        if " runs on " in descr_clean:
+            parts = descr_clean.split(" runs on ", 1)
+            raw_model = parts[0].strip()
+            if not raw_sw:
+                raw_sw = parts[1].strip()
+        elif not raw_sw and ("version " in descr_clean.lower() or "ios" in descr_clean.lower()):
+            raw_sw = descr_clean
+
+        # 1. Normalize Model Name
+        if raw_model.lower().startswith("cisco "):
+            raw_model = "Cisco " + raw_model[6:].strip()
+        elif "catalyst" in raw_model.lower() and not raw_model.lower().startswith("cisco"):
+            raw_model = "Cisco " + raw_model
+
+        # If raw_model is actually a long IOS banner, extract the platform code in parentheses or before 'Software'
+        if "ios software" in raw_model.lower() or len(raw_model) > 42:
+            m_plat = re.search(r",\s*([A-Za-z0-9\-_]+)\s+Software\s*\(([^)]+)\)", raw_model)
+            if m_plat:
+                raw_model = f"Cisco {m_plat.group(1)} ({m_plat.group(2).split('-')[0]})"
+            else:
+                raw_model = raw_model.split(",")[0].strip()[:38]
+
+        if not raw_model:
+            raw_model = vendor or "Kurumsal Switch"
+
+        # 2. Extract Concise Software / IOS Version for Network Admins
+        ios_out = ""
+        if raw_sw:
+            os_family = "IOS"
+            sw_low = raw_sw.lower()
+            if "ios-xe" in sw_low or "ios xe" in sw_low:
+                os_family = "Cisco IOS-XE"
+            elif "nx-os" in sw_low or "nxos" in sw_low:
+                os_family = "Cisco NX-OS"
+            elif "ios" in sw_low:
+                os_family = "Cisco IOS"
+            elif "arubaos" in sw_low:
+                os_family = "ArubaOS"
+            elif "junos" in sw_low:
+                os_family = "JunOS"
+            elif "routeros" in sw_low:
+                os_family = "RouterOS"
+            elif "procurve" in sw_low:
+                os_family = "HPE ProCurve"
+            else:
+                os_family = ""
+
+            ver_match = re.search(r"Version\s+([0-9A-Za-z.\(\)\-:]+)", raw_sw, re.IGNORECASE)
+            if ver_match:
+                ver_num = ver_match.group(1).rstrip(",;")
+                # Extract image feature set if available e.g. (C2960X-UNIVERSALK9-M)
+                feat_match = re.search(r"\(([A-Za-z0-9_\-]+)\)", raw_sw)
+                feat_tag = ""
+                if feat_match:
+                    f_raw = feat_match.group(1)
+                    if "UNIVERSALK9" in f_raw:
+                        feat_tag = " (UNIVERSALK9)"
+                    elif "LANBASE" in f_raw:
+                        feat_tag = " (LANBASE)"
+                    elif "IPBASE" in f_raw:
+                        feat_tag = " (IPBASE)"
+                prefix = f"{os_family} " if os_family else "Sürüm "
+                ios_out = f"{prefix}{ver_num}{feat_tag}".strip()
+            else:
+                first_line = raw_sw.splitlines()[0].strip()
+                if first_line != raw_model:
+                    ios_out = first_line[:44]
+
+        return raw_model[:40], (ios_out or "Belirtilmedi")
 
     @classmethod
     def get_local_mac_addresses(cls) -> set:
@@ -402,7 +547,6 @@ class NetworkDetector:
                     return True
 
         if system_descr and "debian gnu/linux" in system_descr.lower() and "linux" in system_descr.lower():
-            # lldpd on Raspberry Pi advertises 'Debian GNU/Linux 12 (bookworm)...'
             if not system_name or system_name.strip().lower() in ("cirak", socket.gethostname().strip().lower()):
                 return True
 
@@ -412,7 +556,8 @@ class NetworkDetector:
     def get_lldp_from_daemon(cls, iface: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """
         Query system lldpd daemon via lldpctl for real switch neighbor details (supports both CDP and LLDP).
-        Automatically ignores any local self-advertisements ('cirak' / local MAC / local IP).
+        Automatically ignores any local self-advertisements ('cirak' / local MAC / local IP)
+        and separates Hardware Model from IOS / Software Version.
         """
         target_iface = iface or cls.get_active_interface()
         try:
@@ -447,7 +592,6 @@ class NetworkDetector:
                     port = target_if.get("port", {})
                     vlan = target_if.get("vlan", {})
 
-                    # Handle case where chassis is nested under system name key
                     if isinstance(chassis, dict) and "name" not in chassis and len(chassis) == 1:
                         first_key = list(chassis.keys())[0]
                         if isinstance(chassis[first_key], dict):
@@ -481,7 +625,6 @@ class NetworkDetector:
                     port_descr = port.get("descr", "") if isinstance(port, dict) else ""
                     vlan_name = vlan.get("name", "") if isinstance(vlan, dict) else ""
 
-                    # CRITICAL: Skip local Raspberry Pi ('cirak') self-advertisements!
                     if cls.is_local_device(
                         system_name=chassis_name,
                         mac_or_chassis=chassis_id,
@@ -491,11 +634,13 @@ class NetworkDetector:
                         continue
 
                     vendor, is_unauth = cls.identify_mac_vendor(chassis_id)
+                    clean_model, clean_ios = cls.extract_model_and_ios(chassis_descr, vendor=vendor)
 
                     if chassis_name or port_id:
                         return {
                             "system_name": chassis_name or "Anahtarlama Cihazı",
-                            "system_description": chassis_descr,
+                            "system_description": clean_model,
+                            "software_version": clean_ios,
                             "port_id": port_id or "Bilinmiyor",
                             "port_description": port_descr,
                             "vlan_id": vlan_id,
@@ -509,6 +654,113 @@ class NetworkDetector:
         except Exception:
             pass
         return None
+
+    @classmethod
+    def probe_gateway_device(cls, iface: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """
+        Active L2/L3 Discovery for Home/SOHO Routers (e.g., TP-Link, Keenetic, Zyxel, ASUS)
+        and Unmanaged Switches that do not transmit Cisco CDP or IEEE LLDP frames.
+        """
+        target_iface = iface or cls.get_active_interface()
+        if not cls.get_carrier(target_iface):
+            return None
+
+        gw_info = cls.get_default_gateway()
+        gw_ip = gw_info["gateway"] if gw_info else ""
+        gw_mac = cls.get_gateway_mac(gw_ip) if gw_ip else None
+
+        # Fallback: check any active neighbor MAC on target_iface in /proc/net/arp
+        if not gw_mac:
+            arp_file = Path("/proc/net/arp")
+            if arp_file.exists():
+                try:
+                    for line in arp_file.read_text().splitlines()[1:]:
+                        parts = line.split()
+                        if len(parts) >= 6 and parts[5] == target_iface and parts[3] != "00:00:00:00:00:00":
+                            gw_ip = gw_ip or parts[0]
+                            gw_mac = parts[3].lower()
+                            break
+                except Exception:
+                    pass
+
+        if not gw_mac:
+            return None
+
+        vendor, is_consumer = cls.identify_mac_vendor(gw_mac)
+        speed, duplex = cls.get_speed_duplex(target_iface)
+        link_str = f"{speed}M {duplex}" if speed > 0 else "Aktif Link"
+
+        # Probe HTTP title / Server / Realm and Reverse DNS on Gateway IP for model & firmware details
+        http_title = ""
+        http_server = ""
+        dns_host = ""
+
+        if gw_ip:
+            try:
+                dns_host = socket.gethostbyaddr(gw_ip)[0]
+            except Exception:
+                pass
+
+            for port in (80, 8080):
+                sock = None
+                try:
+                    sock = socket.create_connection((gw_ip, port), timeout=0.6)
+                    req = f"GET / HTTP/1.0\r\nHost: {gw_ip}\r\nUser-Agent: CIRAK-Diagnostic\r\n\r\n".encode("ascii")
+                    sock.sendall(req)
+                    raw_resp = sock.recv(4096).decode("utf-8", errors="ignore")
+                    m_srv = re.search(r"^Server:\s*(.+)$", raw_resp, re.IGNORECASE | re.MULTILINE)
+                    if m_srv:
+                        http_server = m_srv.group(1).strip()[:36]
+                    m_auth = re.search(r'realm="([^"]+)"', raw_resp, re.IGNORECASE)
+                    if m_auth:
+                        http_title = m_auth.group(1).strip()[:36]
+                    m_title = re.search(r"<title>([^<]+)</title>", raw_resp, re.IGNORECASE)
+                    if m_title and not http_title:
+                        t_candidate = m_title.group(1).strip()
+                        if t_candidate and not any(x in t_candidate.lower() for x in ("redirect", "301", "302", "index", "login")):
+                            http_title = t_candidate[:36]
+                    if http_title or http_server:
+                        break
+                except Exception:
+                    pass
+                finally:
+                    if sock:
+                        try:
+                            sock.close()
+                        except Exception:
+                            pass
+
+        dev_type = "Kablosuz Router / Switch" if is_consumer else "Ağ Geçidi / Switch"
+        if http_title:
+            sys_name = f"{http_title} ({gw_ip})" if gw_ip else http_title
+            model_name = f"{vendor} • {http_title}"
+        elif dns_host and dns_host != gw_ip:
+            sys_name = f"{dns_host} ({ vendor })"
+            model_name = f"{vendor} ({dev_type})"
+        else:
+            sys_name = f"{vendor} Yönlendirici/Switch"
+            model_name = f"{vendor} ({dev_type})"
+
+        sw_info = (
+            f"Web: {http_server} (CDP/LLDP Yok)"
+            if http_server
+            else "CDP/LLDP Yok (Yönetimsiz / SOHO Cihaz)"
+        )
+
+        return {
+            "system_name": sys_name[:38],
+            "system_description": model_name[:40],
+            "software_version": sw_info[:42],
+            "port_id": f"LAN Portu ({link_str})",
+            "port_description": "Doğrudan L2 Bağlantı",
+            "vlan_id": 1,
+            "vlan_name": "Untagged (Standart LAN)",
+            "management_ip": gw_ip or "Yok",
+            "chassis_id": gw_mac,
+            "protocol": "L2-ARP / GW",
+            "vendor": vendor,
+            "is_unauthorized_switch": is_consumer,
+        }
 
     @classmethod
     def get_packet_stats(cls, iface: Optional[str] = None) -> Tuple[int, int, int, int]:

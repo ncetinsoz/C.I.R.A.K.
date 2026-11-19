@@ -197,17 +197,20 @@ class DiscoveryView(QWidget):
         self.sw_div.setFrameShape(QFrame.HLine)
         sw_layout.addWidget(self.sw_div)
 
-        # 2-Column Telemetry Grid inside Switch Box
+        # 2-Column Telemetry Grid inside Switch Box (4 rows, with IOS version below Marka/Model)
         grid = QGridLayout()
-        grid.setHorizontalSpacing(18)
-        grid.setVerticalSpacing(6)
-        grid.setContentsMargins(2, 4, 2, 4)
+        grid.setHorizontalSpacing(16)
+        grid.setVerticalSpacing(4)
+        grid.setContentsMargins(2, 2, 2, 2)
 
         self.lbl_k_name = QLabel("Cihaz Adı (Switch):")
         self.val_sw_name = QLabel("Bekleniyor...")
 
         self.lbl_k_model = QLabel("Marka / Model:")
         self.val_sw_model = QLabel("--")
+
+        self.lbl_k_ios = QLabel("Yazılım / IOS Sürümü:")
+        self.val_sw_ios = QLabel("--")
 
         self.lbl_k_mgmt = QLabel("Yönetim IP Adresi:")
         self.val_sw_mgmt = QLabel("--")
@@ -222,24 +225,31 @@ class DiscoveryView(QWidget):
         self.val_sw_mac = QLabel("--")
 
         self._key_labels = [
-            self.lbl_k_name, self.lbl_k_model, self.lbl_k_mgmt,
+            self.lbl_k_name, self.lbl_k_model, self.lbl_k_ios, self.lbl_k_mgmt,
             self.lbl_k_port, self.lbl_k_vlan, self.lbl_k_mac,
         ]
 
+        # Row 0: Switch Name | Connected Port
         grid.addWidget(self.lbl_k_name, 0, 0)
         grid.addWidget(self.val_sw_name, 0, 1)
         grid.addWidget(self.lbl_k_port, 0, 2)
         grid.addWidget(self.val_sw_port, 0, 3)
 
+        # Row 1: Brand / Model | VLAN ID
         grid.addWidget(self.lbl_k_model, 1, 0)
         grid.addWidget(self.val_sw_model, 1, 1)
         grid.addWidget(self.lbl_k_vlan, 1, 2)
         grid.addWidget(self.val_sw_vlan, 1, 3)
 
-        grid.addWidget(self.lbl_k_mgmt, 2, 0)
-        grid.addWidget(self.val_sw_mgmt, 2, 1)
-        grid.addWidget(self.lbl_k_mac, 2, 2)
-        grid.addWidget(self.val_sw_mac, 2, 3)
+        # Row 2: Software / IOS Version (directly below Marka / Model, spanning columns 1..3)
+        grid.addWidget(self.lbl_k_ios, 2, 0)
+        grid.addWidget(self.val_sw_ios, 2, 1, 1, 3)
+
+        # Row 3: Management IP | Switch MAC / Vendor
+        grid.addWidget(self.lbl_k_mgmt, 3, 0)
+        grid.addWidget(self.val_sw_mgmt, 3, 1)
+        grid.addWidget(self.lbl_k_mac, 3, 2)
+        grid.addWidget(self.val_sw_mac, 3, 3)
 
         grid.setColumnStretch(1, 1)
         grid.setColumnStretch(3, 1)
@@ -247,7 +257,7 @@ class DiscoveryView(QWidget):
 
         # Security / Diagnostic Note Banner at bottom of Switch Panel
         self.lbl_sw_Diagnostic = QLabel(
-            "💡 Bilgi: Arka plan dinleyicisi Cisco CDP (60 sn), IEEE LLDP, 802.1X NAC (EAPOL) ve PVST+ VLAN paketlerini kesintisiz yakalar."
+            "💡 Bilgi: Arka plan dinleyicisi Cisco CDP (60 sn), IEEE LLDP, 802.1X NAC, PVST+ ve L2 Ağ Geçidi bilgilerini yakalar."
         )
         self.lbl_sw_Diagnostic.setWordWrap(True)
         sw_layout.addStretch()
@@ -258,6 +268,7 @@ class DiscoveryView(QWidget):
         main_layout.addWidget(self.switch_panel, 3)
 
         # Populate initial passive data if daemon or background sniffer already cached CDP/LLDP
+        self._gw_probe_running = False
         self._refresh_cached_switch_info()
 
     def update_theme(self):
@@ -334,19 +345,22 @@ class DiscoveryView(QWidget):
         self.sw_div.setStyleSheet(f"background-color: {border_col}; max-height: 1px;")
 
         for kl in self._key_labels:
-            kl.setStyleSheet(f"color: {text_mut}; font-size: 11px; font-weight: 700;")
+            kl.setStyleSheet(f"color: {text_mut}; font-size: 10px; font-weight: 700;")
 
-        val_style = f"color: {text_pri}; font-family: 'DejaVu Sans Mono', monospace; font-size: 12px; font-weight: 800;"
+        val_style = f"color: {text_pri}; font-family: 'DejaVu Sans Mono', monospace; font-size: 11px; font-weight: 800;"
         self.val_sw_name.setStyleSheet(
-            f"color: {colors['accent_cyan']}; font-family: 'DejaVu Sans Mono', monospace; font-size: 12px; font-weight: 900;"
+            f"color: {colors['accent_cyan']}; font-family: 'DejaVu Sans Mono', monospace; font-size: 11px; font-weight: 900;"
         )
         self.val_sw_model.setStyleSheet(val_style)
+        self.val_sw_ios.setStyleSheet(
+            f"color: {colors['accent_indigo']}; font-family: 'DejaVu Sans Mono', monospace; font-size: 11px; font-weight: 900;"
+        )
         self.val_sw_mgmt.setStyleSheet(val_style)
         self.val_sw_port.setStyleSheet(
-            f"color: {colors['status_success']}; font-family: 'DejaVu Sans Mono', monospace; font-size: 12px; font-weight: 900;"
+            f"color: {colors['status_success']}; font-family: 'DejaVu Sans Mono', monospace; font-size: 11px; font-weight: 900;"
         )
         self.val_sw_vlan.setStyleSheet(
-            f"color: {colors['status_warning']}; font-family: 'DejaVu Sans Mono', monospace; font-size: 12px; font-weight: 900;"
+            f"color: {colors['status_warning']}; font-family: 'DejaVu Sans Mono', monospace; font-size: 11px; font-weight: 900;"
         )
         self.val_sw_mac.setStyleSheet(val_style)
 
@@ -397,7 +411,7 @@ class DiscoveryView(QWidget):
             self.blinker.start_blink(duration_sec=30, interval_sec=sec)
 
     def _refresh_cached_switch_info(self):
-        """Non-blocking check of lldpd AND continuous background raw L2 sniffer cache."""
+        """Non-blocking check of lldpd, continuous background raw L2 sniffer cache, and L2/L3 gateway fallback."""
         iface = NetworkDetector.get_active_interface()
         cached = NetworkDetector.get_lldp_from_daemon(iface)
         if cached and cached.get("system_name"):
@@ -407,15 +421,35 @@ class DiscoveryView(QWidget):
         bg = LLDPCdpTest.get_cached_discovery(iface, max_age_sec=180.0)
         if bg and (bg.get("system_name") or bg.get("port_id")):
             self._populate_switch_panel(bg)
+            return
+
+        # If no CDP/LLDP is cached yet, probe active L2/L3 gateway (e.g. TP-Link / home router) in background once
+        if not self._gw_probe_running and not self._last_switch_data:
+            self._gw_probe_running = True
+
+            def _gw_task():
+                return NetworkDetector.probe_gateway_device(iface)
+
+            gw_worker = BaseWorker(_gw_task)
+            gw_worker.signals.result.connect(self._on_gw_probe_finished, Qt.QueuedConnection)
+            gw_worker.signals.error.connect(lambda _: setattr(self, "_gw_probe_running", False), Qt.QueuedConnection)
+            QThreadPool.globalInstance().start(gw_worker)
+
+    def _on_gw_probe_finished(self, gw_data: Optional[dict]):
+        self._gw_probe_running = False
+        if gw_data and (gw_data.get("system_name") or gw_data.get("chassis_id")):
+            # Only populate if a full CDP/LLDP frame hasn't already arrived
+            if not self._last_switch_data or not str(self._last_switch_data.get("protocol", "")).startswith(("CDP", "LLDP")):
+                self._populate_switch_panel(gw_data)
 
     def _run_lldp_query(self):
         """Run active CDP/LLDP/NAC/L2 capture on background worker thread."""
-        self.btn_read_lldp.setText("Dinleniyor (CDP/LLDP)...")
+        self.btn_read_lldp.setText("Dinleniyor (CDP/LLDP/L2)...")
         self.btn_read_lldp.setEnabled(False)
         self.proto_badge.setText("PAKET BEKLENİYOR")
 
         def _task():
-            test = LLDPCdpTest(timeout_sec=6.0, simulate=False)
+            test = LLDPCdpTest(timeout_sec=5.0, simulate=False)
             return test.run()
 
         self._lldp_worker = BaseWorker(_task)
@@ -442,10 +476,25 @@ class DiscoveryView(QWidget):
             proto = d.get("protocol", "CDP/LLDP")
             is_unauth = d.get("is_unauthorized_switch", False)
             nac_active = d.get("nac_active", False)
+            vendor_str = str(d.get("vendor") or "")
 
             self.val_sw_name.setText(str(d.get("system_name") or "Tespit Edildi"))
-            model_str = d.get("system_description") or d.get("vendor") or "Kurumsal Switch"
-            self.val_sw_model.setText(str(model_str)[:38])
+
+            raw_descr = str(d.get("system_description") or "")
+            raw_sw = str(d.get("software_version") or "")
+            model_clean, sw_clean = NetworkDetector.extract_model_and_ios(
+                raw_descr, sw_ver=raw_sw, vendor=vendor_str
+            )
+            model_display = model_clean or vendor_str or "Kurumsal Switch"
+            self.val_sw_model.setText(str(model_display)[:42])
+
+            if sw_clean:
+                self.val_sw_ios.setText(str(sw_clean)[:68])
+            elif "L2-ARP" in proto:
+                self.val_sw_ios.setText("SOHO / Standart Firmware (CDP/LLDP Yok)")
+            else:
+                self.val_sw_ios.setText("Bildirilmedi (CDP/LLDP Paketi Bekleniyor)")
+
             self.val_sw_mgmt.setText(str(d.get("management_ip") or "Bildirilmedi"))
 
             port_str = str(d.get("port_id") or "Bilinmiyor")
@@ -459,10 +508,30 @@ class DiscoveryView(QWidget):
             self.val_sw_vlan.setText(vlan_str)
 
             mac_str = str(d.get("chassis_id") or "--")
-            vendor_str = str(d.get("vendor") or "")
             self.val_sw_mac.setText(f"{mac_str} ({vendor_str})" if vendor_str else mac_str)
 
-            if is_unauth:
+            if "L2-ARP" in proto:
+                bg = "#451a03" if is_dark else "#fef3c7"
+                fg = colors["status_warning"] if is_unauth else colors["accent_cyan"]
+                badge_txt = f"✓ SOHO ROUTER / SWITCH ({vendor_str})" if is_unauth else f"✓ {proto} KEŞİF"
+                self.proto_badge.setText(badge_txt)
+                self.proto_badge.setStyleSheet(f"""
+                    background-color: {bg};
+                    color: {fg};
+                    border: 1px solid {fg};
+                    border-radius: 4px;
+                    padding: 2px 8px;
+                """)
+                if is_unauth:
+                    self.lbl_sw_Diagnostic.setText(
+                        f"ℹ Bağlı cihaz ({vendor_str}) CDP/LLDP yayınlamayan bir yönlendirici/switch. Cihaz bilgileri L2 ARP, MAC OUI ve HTTP/DNS analizi ile keşfedildi. (Kampüs ağında yetkisiz cihaz uyarısı verir.)"
+                    )
+                else:
+                    self.lbl_sw_Diagnostic.setText(
+                        f"✓ Ağ geçidi / anahtarlama cihazı ({vendor_str}) L2 ARP ve HTTP/DNS analizi ile keşfedildi (CDP/LLDP kapalı)."
+                    )
+                self.lbl_sw_Diagnostic.setStyleSheet(f"color: {fg}; font-size: 10px; font-weight: bold;")
+            elif is_unauth:
                 bg = "#450a0a" if is_dark else "#fee2e2"
                 fg = colors["status_error"]
                 self.proto_badge.setText(f"⚠ YETKİSİZ SWITCH ({proto})")
@@ -523,6 +592,7 @@ class DiscoveryView(QWidget):
             """)
             self.val_sw_name.setText("CDP / LLDP Bekleniyor (Arka Plan Dinlemede)")
             self.val_sw_model.setText(f"Ağ Geçidi Üreticisi: {vendor}")
+            self.val_sw_ios.setText("--")
             self.val_sw_mac.setText(gw_mac if gw_mac else "--")
             self.lbl_sw_Diagnostic.setText(
                 "⚠ Not: Cisco CDP paketleri 60 saniyede bir yayınlanır. Arka plan dinleyicisi paketi yakaladığında bu ekran otomatik güncellenir."

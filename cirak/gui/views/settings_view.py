@@ -5,13 +5,18 @@ Provides touch-optimized configuration for:
   2. Layer 2 Override: IEEE 802.1Q VLAN ID Tagging & Custom MAC Address Spoofing/Cloning
   3. Date/Time & NTP Synchronization (Default: time.deu.edu.tr)
   4. Display Theme: Dark Mode (Default) / Soft Industrial Light Mode
-Includes an integrated Touch Keypad Dialog and full Dark/Light theme consistency.
+  5. System Specifications Popup Modal (Hardware & Software telemetry at a glance)
+Includes direct tap-to-open Touch Keyboard/Keypad on all inputs, large tactile VLAN/MAC toggle buttons,
+and full Dark/Light theme consistency.
 """
 
+import os
+import platform
+import shutil
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Dict
 from PySide6.QtCore import Qt, Signal, QTimer, QThreadPool
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QFont, QMouseEvent
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -21,24 +26,110 @@ from PySide6.QtWidgets import (
     QPushButton,
     QFrame,
     QLineEdit,
-    QCheckBox,
     QDialog,
 )
+import cirak
 from cirak import config
+from cirak.backend.network_detector import NetworkDetector
 from cirak.backend.settings_manager import SettingsManager
 from cirak.core.worker import BaseWorker
 from cirak.gui.theme import ThemeManager
 
 
+class TouchableLineEdit(QLineEdit):
+    """
+    Touch-optimized QLineEdit for 7-inch linuxfb screens.
+    Emits `tapped` immediately when touched so the on-screen touch keypad/keyboard opens
+    even without a physical USB keyboard or hitting a separate side button.
+    """
+
+    tapped = Signal()
+
+    def __init__(self, text: str = "", parent: QWidget = None):
+        super().__init__(text, parent)
+        self.setCursor(Qt.PointingHandCursor)
+        self._visually_active = True
+
+    def set_visually_active(self, active: bool):
+        """Track visual active/inactive state while keeping widget touch-receptive."""
+        self._visually_active = active
+        self.setProperty("activeInput", "true" if active else "false")
+        self.style().unpolish(self)
+        self.style().polish(self)
+
+    def mousePressEvent(self, event: QMouseEvent):
+        super().mousePressEvent(event)
+        if event.button() == Qt.LeftButton:
+            self.tapped.emit()
+
+
+class TactileToggleButton(QPushButton):
+    """
+    Large, finger-friendly checkable toggle button replacing tiny QCheckBox indicators
+    for VLAN 802.1Q and Custom MAC activation on 7-inch touchscreens.
+    Provides QCheckBox-compatible `.isChecked()`, `.setChecked()`, and `.toggled` signal.
+    """
+
+    def __init__(self, label_off: str, label_on: str, parent: QWidget = None):
+        super().__init__(parent)
+        self._label_off = label_off
+        self._label_on = label_on
+        self.setCheckable(True)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setFixedHeight(27)
+        self.setMinimumWidth(148)
+        self.toggled.connect(self._refresh_appearance)
+        self._refresh_appearance(False)
+
+    def _refresh_appearance(self, checked: bool):
+        colors = ThemeManager.get_colors()
+        is_dark = ThemeManager.get_current_theme() == config.THEME_DARK
+        if checked:
+            self.setText(f"☑ {self._label_on}")
+            bg = "#059669" if is_dark else "#10b981"
+            self.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {bg};
+                    color: #ffffff;
+                    border: 1.5px solid #34d399;
+                    border-radius: 6px;
+                    padding: 2px 8px;
+                    font-size: 10px;
+                    font-weight: 900;
+                    text-align: left;
+                }}
+            """)
+        else:
+            self.setText(f"☐ {self._label_off}")
+            bg = "#0f172a" if is_dark else "#e2e8f0"
+            self.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {bg};
+                    color: {colors['text_secondary']};
+                    border: 1.5px solid {colors['card_border']};
+                    border-radius: 6px;
+                    padding: 2px 8px;
+                    font-size: 10px;
+                    font-weight: 700;
+                    text-align: left;
+                }}
+            """)
+
+
 class TouchKeypadDialog(QDialog):
-    """On-screen touch keypad for entering IP, CIDR, VLAN, MAC, or NTP host on 7-inch screen."""
+    """On-screen touch keypad & full QWERTY keyboard for entering IP, CIDR, VLAN, MAC, or Hostname."""
 
     def __init__(self, title: str, initial_value: str, mode: str = "ip", parent: QWidget = None):
         super().__init__(parent)
         self.setWindowTitle(title)
-        self.setFixedSize(460, 310)
-        self.setModal(True)
         self.mode = mode  # "ip", "vlan", "mac", "host"
+        if mode == "host":
+            self.setFixedSize(720, 390)
+        elif mode == "mac":
+            self.setFixedSize(560, 350)
+        else:
+            self.setFixedSize(500, 340)
+        self.setModal(True)
         self.result_text = initial_value
         self._init_ui(title, initial_value)
 
@@ -59,11 +150,11 @@ class TouchKeypadDialog(QDialog):
             QLineEdit {{
                 background-color: {colors['card_bg']};
                 color: {colors['text_primary']};
-                border: 1.5px solid {colors['card_border']};
+                border: 1.5px solid {colors['accent_cyan']};
                 border-radius: 6px;
-                padding: 4px 8px;
+                padding: 4px 10px;
                 font-family: "DejaVu Sans Mono", monospace;
-                font-size: 15px;
+                font-size: 16px;
                 font-weight: bold;
             }}
             QPushButton {{
@@ -83,64 +174,106 @@ class TouchKeypadDialog(QDialog):
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 10, 12, 10)
-        layout.setSpacing(8)
+        layout.setSpacing(6)
 
+        hdr_row = QHBoxLayout()
         lbl_title = QLabel(f"⌨ {title}")
-        layout.addWidget(lbl_title)
+        lbl_title.setFont(QFont("DejaVu Sans", 11, QFont.Bold))
+        hdr_row.addWidget(lbl_title)
+        hdr_row.addStretch()
+        layout.addLayout(hdr_row)
 
         self.input_edit = QLineEdit(initial_value)
-        self.input_edit.setFixedHeight(34)
+        self.input_edit.setFixedHeight(36)
         layout.addWidget(self.input_edit)
 
-        grid = QGridLayout()
-        grid.setSpacing(5)
+        if self.mode == "host":
+            # Quick preset chips for NTP / Hostnames
+            preset_row = QHBoxLayout()
+            preset_row.setSpacing(6)
+            for preset in ("time.deu.edu.tr", "pool.ntp.org", "tr.pool.ntp.org", ".edu.tr", ".com"):
+                p_btn = QPushButton(preset)
+                p_btn.setFixedHeight(28)
+                p_btn.setStyleSheet(
+                    f"font-size: 10px; color: {colors['accent_cyan']}; border: 1px solid {colors['accent_cyan']};"
+                )
+                p_btn.clicked.connect(lambda checked=False, val=preset: self._on_preset(val))
+                preset_row.addWidget(p_btn)
+            layout.addLayout(preset_row)
 
-        if self.mode == "mac":
-            keys = [
-                "1", "2", "3", "A", "B",
-                "4", "5", "6", "C", "D",
-                "7", "8", "9", "E", "F",
-                ":", "0", ".", "⌫", "Temizle",
+            # Full QWERTY + Number rows
+            rows = [
+                ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "-", "⌫"],
+                ["q", "w", "e", "r", "t", "y", "u", "i", "o", "p", "_", "Temizle"],
+                ["a", "s", "d", "f", "g", "h", "j", "k", "l", ".", ":", "/"],
+                ["z", "x", "c", "v", "b", "n", "m", ".deu", ".tr", ".org"],
             ]
-            cols = 5
-        elif self.mode == "host":
-            keys = [
-                "1", "2", "3", "time.", "pool.",
-                "4", "5", "6", "deu.", "edu.",
-                "7", "8", "9", "tr", "org",
-                ".", "0", "-", "⌫", "Temizle",
-            ]
-            cols = 5
+            for r_keys in rows:
+                r_layout = QHBoxLayout()
+                r_layout.setSpacing(4)
+                for k in r_keys:
+                    btn = QPushButton(k)
+                    btn.setFixedHeight(38)
+                    btn.clicked.connect(lambda checked=False, key=k: self._on_key(key))
+                    r_layout.addWidget(btn)
+                layout.addLayout(r_layout)
         else:
-            keys = [
-                "1", "2", "3", "⌫",
-                "4", "5", "6", "Temizle",
-                "7", "8", "9", ".",
-                "0", "00", "/", ":",
-            ]
-            cols = 4
+            grid = QGridLayout()
+            grid.setSpacing(6)
+            if self.mode == "mac":
+                keys = [
+                    "1", "2", "3", "A", "B",
+                    "4", "5", "6", "C", "D",
+                    "7", "8", "9", "E", "F",
+                    ":", "0", "-", "⌫", "Temizle",
+                ]
+                cols = 5
+            elif self.mode == "vlan":
+                keys = [
+                    "1", "2", "3", "⌫",
+                    "4", "5", "6", "Temizle",
+                    "7", "8", "9", "10",
+                    "0", "24", "100", "200",
+                ]
+                cols = 4
+            else:
+                keys = [
+                    "1", "2", "3", "⌫",
+                    "4", "5", "6", "Temizle",
+                    "7", "8", "9", ".",
+                    "0", "192.", "168.", "10.",
+                ]
+                cols = 4
 
-        for idx, k in enumerate(keys):
-            btn = QPushButton(k)
-            btn.setFixedHeight(36)
-            btn.clicked.connect(lambda checked=False, key=k: self._on_key(key))
-            grid.addWidget(btn, idx // cols, idx % cols)
-
-        layout.addLayout(grid)
+            for idx, k in enumerate(keys):
+                btn = QPushButton(k)
+                btn.setFixedHeight(42)
+                btn.clicked.connect(lambda checked=False, key=k: self._on_key(key))
+                grid.addWidget(btn, idx // cols, idx % cols)
+            layout.addLayout(grid)
 
         bottom = QHBoxLayout()
-        btn_cancel = QPushButton("İptal")
-        btn_cancel.setFixedHeight(34)
+        bottom.setSpacing(10)
+        btn_cancel = QPushButton("✕ İptal")
+        btn_cancel.setFixedHeight(36)
         btn_cancel.clicked.connect(self.reject)
 
-        btn_ok = QPushButton("✓ Tamam")
-        btn_ok.setFixedHeight(34)
-        btn_ok.setStyleSheet("background-color: #059669; color: #ffffff; border: 1px solid #10b981;")
+        btn_ok = QPushButton("✓ Tamam (Onayla)")
+        btn_ok.setFixedHeight(36)
+        btn_ok.setStyleSheet(
+            "background-color: #059669; color: #ffffff; border: 1.5px solid #10b981; font-size: 13px; font-weight: 900;"
+        )
         btn_ok.clicked.connect(self._on_accept)
 
-        bottom.addWidget(btn_cancel)
-        bottom.addWidget(btn_ok)
+        bottom.addWidget(btn_cancel, 1)
+        bottom.addWidget(btn_ok, 2)
         layout.addLayout(bottom)
+
+    def _on_preset(self, val: str):
+        if val.startswith("."):
+            self.input_edit.setText(self.input_edit.text() + val)
+        else:
+            self.input_edit.setText(val)
 
     def _on_key(self, key: str):
         cur = self.input_edit.text()
@@ -148,12 +281,234 @@ class TouchKeypadDialog(QDialog):
             self.input_edit.setText(cur[:-1])
         elif key == "Temizle":
             self.input_edit.clear()
+        elif self.mode == "vlan" and key in ("10", "24", "100", "200") and not cur:
+            self.input_edit.setText(key)
         else:
             self.input_edit.setText(cur + key.lower() if self.mode == "mac" else cur + key)
 
     def _on_accept(self):
         self.result_text = self.input_edit.text().strip()
         self.accept()
+
+
+class SystemInfoDialog(QDialog):
+    """
+    Concise ('hap gibi') Hardware & Software System Properties Popup Modal.
+    Reads live kernel/sysfs/procfs telemetry without external heavy dependencies.
+    """
+
+    def __init__(self, manager: SettingsManager, parent: QWidget = None):
+        super().__init__(parent)
+        self.setWindowTitle("Ç.I.R.A.K. Sistem Özellikleri")
+        self.setFixedSize(680, 390)
+        self.setModal(True)
+        self.manager = manager
+        self._init_ui()
+
+    @staticmethod
+    def collect_system_specs(manager: Optional[SettingsManager] = None) -> Dict[str, str]:
+        """Collect concise hardware, OS, thermal, memory, storage, and NIC specs."""
+        specs: Dict[str, str] = {}
+
+        # 1. Software & Framework Version
+        py_ver = platform.python_version()
+        specs["sw_version"] = f"Ç.I.R.A.K. v{getattr(cirak, '__version__', '0.3.2')} (Python {py_ver} / PySide6 Qt6)"
+
+        # 2. Hardware / Board Model
+        hw_model = ""
+        try:
+            if os.path.exists("/proc/device-tree/model"):
+                with open("/proc/device-tree/model", "rb") as f:
+                    hw_model = f.read().decode("utf-8", errors="ignore").strip("\x00").strip()
+        except Exception:
+            pass
+        if not hw_model:
+            hw_model = f"Linux El Terminali ({platform.machine()})"
+        specs["hw_model"] = hw_model
+
+        # 3. CPU & Thermal Sensor
+        cpu_cores = os.cpu_count() or 4
+        cpu_temp = ""
+        try:
+            if os.path.exists("/sys/class/thermal/thermal_zone0/temp"):
+                with open("/sys/class/thermal/thermal_zone0/temp", "r") as f:
+                    milli = int(f.read().strip())
+                    cpu_temp = f"{milli / 1000.0:.1f} °C"
+        except Exception:
+            pass
+        specs["cpu_info"] = f"{cpu_cores} Çekirdek ({platform.machine()})" + (f" | Sıcaklık: {cpu_temp}" if cpu_temp else "")
+
+        # 4. RAM Usage (/proc/meminfo)
+        ram_str = "Bilinmiyor"
+        try:
+            mem_total_kb = 0
+            mem_avail_kb = 0
+            with open("/proc/meminfo", "r") as f:
+                for line in f:
+                    if line.startswith("MemTotal:"):
+                        mem_total_kb = int(line.split()[1])
+                    elif line.startswith("MemAvailable:"):
+                        mem_avail_kb = int(line.split()[1])
+            if mem_total_kb > 0:
+                used_mb = (mem_total_kb - mem_avail_kb) // 1024
+                total_mb = mem_total_kb // 1024
+                pct = ((mem_total_kb - mem_avail_kb) / float(mem_total_kb)) * 100.0
+                ram_str = f"{used_mb} MB / {total_mb} MB (%{pct:.0f} Kullanımda)"
+        except Exception:
+            pass
+        specs["ram_info"] = ram_str
+
+        # 5. Storage / microSD Usage
+        disk_str = "Bilinmiyor"
+        try:
+            du = shutil.disk_usage("/")
+            used_gb = du.used / (1024 ** 3)
+            total_gb = du.total / (1024 ** 3)
+            pct = (du.used / float(du.total)) * 100.0 if du.total else 0.0
+            disk_str = f"{used_gb:.1f} GB / {total_gb:.1f} GB Dolu (%{pct:.0f})"
+        except Exception:
+            pass
+        specs["disk_info"] = disk_str
+
+        # 6. OS & Kernel
+        os_name = ""
+        try:
+            if os.path.exists("/etc/os-release"):
+                with open("/etc/os-release", "r") as f:
+                    for line in f:
+                        if line.startswith("PRETTY_NAME="):
+                            os_name = line.split("=", 1)[1].strip().strip('"')
+                            break
+        except Exception:
+            pass
+        kernel_ver = platform.release()
+        specs["os_kernel"] = f"{os_name or 'Linux'} | Kernel: {kernel_ver}"
+
+        # 7. System Uptime
+        uptime_str = "--"
+        try:
+            if os.path.exists("/proc/uptime"):
+                with open("/proc/uptime", "r") as f:
+                    up_sec = int(float(f.read().split()[0]))
+                    days, rem = divmod(up_sec, 86400)
+                    hours, rem = divmod(rem, 3600)
+                    mins, _ = divmod(rem, 60)
+                    if days > 0:
+                        uptime_str = f"{days} gün, {hours} sa, {mins} dk"
+                    else:
+                        uptime_str = f"{hours} saat, {mins} dakika"
+        except Exception:
+            pass
+        specs["uptime"] = uptime_str
+
+        # 8. Network Interfaces (eth0 & wlan0)
+        eth_iface = NetworkDetector.get_active_interface() or "eth0"
+        eth_ip = NetworkDetector.get_ip_address_cidr(eth_iface) or "IP Yok"
+        eth_mac = NetworkDetector.get_mac_address(eth_iface) or "--"
+        eth_spd, eth_dup = NetworkDetector.get_speed_duplex(eth_iface)
+        spd_txt = f"{eth_spd}M ({eth_dup})" if eth_spd > 0 else "Link Yok"
+        specs["eth_info"] = f"{eth_iface}: {eth_ip} | {spd_txt} | MAC: {eth_mac}"
+
+        wlan_mac = NetworkDetector.get_mac_address("wlan0") or "--"
+        wlan_ip = NetworkDetector.get_ip_address_cidr("wlan0") or "Pasif / Tarama Modu"
+        specs["wlan_info"] = f"wlan0: {wlan_ip} | MAC: {wlan_mac}"
+
+        return specs
+
+    def _init_ui(self):
+        colors = ThemeManager.get_colors()
+        is_dark = ThemeManager.get_current_theme() == config.THEME_DARK
+        specs = self.collect_system_specs(self.manager)
+
+        self.setStyleSheet(f"""
+            QDialog {{
+                background-color: {colors['bg_main']};
+                border: 2px solid {colors['accent_indigo']};
+                border-radius: 12px;
+            }}
+            QFrame#SpecCard {{
+                background-color: {colors['card_bg']};
+                border: 1.5px solid {colors['card_border']};
+                border-radius: 10px;
+            }}
+            QLabel {{
+                background: transparent;
+                border: none;
+            }}
+        """)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(14, 12, 14, 12)
+        layout.setSpacing(8)
+
+        # Header
+        hdr = QHBoxLayout()
+        title = QLabel("ℹ️ Ç.I.R.A.K. DONANIM VE YAZILIM SİSTEM ÖZELLİKLERİ")
+        title.setStyleSheet(f"color: {colors['accent_cyan']}; font-size: 13px; font-weight: 900;")
+        badge = QLabel(f"v{getattr(cirak, '__version__', '0.3.2')}")
+        badge.setStyleSheet(f"""
+            background-color: {'#1e1b4b' if is_dark else '#e0e7ff'};
+            color: {colors['accent_indigo']};
+            border: 1px solid {colors['accent_indigo']};
+            border-radius: 5px;
+            padding: 2px 10px;
+            font-family: monospace;
+            font-weight: 900;
+        """)
+        hdr.addWidget(title)
+        hdr.addStretch()
+        hdr.addWidget(badge)
+        layout.addLayout(hdr)
+
+        # Specs Card
+        card = QFrame()
+        card.setObjectName("SpecCard")
+        grid = QGridLayout(card)
+        grid.setContentsMargins(14, 10, 14, 10)
+        grid.setHorizontalSpacing(14)
+        grid.setVerticalSpacing(7)
+
+        rows = [
+            ("Yazılım Sürümü:", specs["sw_version"], colors["accent_cyan"]),
+            ("Donanım / Cihaz:", specs["hw_model"], colors["text_primary"]),
+            ("İşlemci & Sıcaklık:", specs["cpu_info"], colors["status_success"]),
+            ("RAM Bellek:", specs["ram_info"], colors["text_primary"]),
+            ("Depolama (Disk):", specs["disk_info"], colors["text_primary"]),
+            ("İşletim Sistemi:", specs["os_kernel"], colors["text_secondary"]),
+            ("Çalışma Süresi:", specs["uptime"], colors["accent_amber"]),
+            ("Kablolu Ağ (LAN):", specs["eth_info"], colors["status_success"]),
+            ("Kablosuz (Wi-Fi):", specs["wlan_info"], colors["accent_indigo"]),
+        ]
+
+        for idx, (k_txt, v_txt, v_col) in enumerate(rows):
+            k_lbl = QLabel(k_txt)
+            k_lbl.setStyleSheet(f"color: {colors['text_muted']}; font-size: 11px; font-weight: 800;")
+            v_lbl = QLabel(v_txt)
+            v_lbl.setStyleSheet(
+                f"color: {v_col}; font-family: 'DejaVu Sans Mono', monospace; font-size: 11px; font-weight: 800;"
+            )
+            grid.addWidget(k_lbl, idx, 0)
+            grid.addWidget(v_lbl, idx, 1)
+
+        grid.setColumnStretch(1, 1)
+        layout.addWidget(card, 1)
+
+        # Close button
+        btn_close = QPushButton("✓ Kapat")
+        btn_close.setFixedHeight(34)
+        btn_close.setCursor(Qt.PointingHandCursor)
+        btn_close.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {colors['accent_indigo']};
+                color: #ffffff;
+                border: none;
+                border-radius: 6px;
+                font-size: 12px;
+                font-weight: 900;
+            }}
+        """)
+        btn_close.clicked.connect(self.accept)
+        layout.addWidget(btn_close)
 
 
 class SettingsView(QWidget):
@@ -185,19 +540,24 @@ class SettingsView(QWidget):
         # 1. Header Toolbar
         header = QHBoxLayout()
         header.setContentsMargins(0, 0, 0, 0)
-        header.setSpacing(8)
+        header.setSpacing(6)
 
         self.back_btn = QPushButton("← Geri")
-        self.back_btn.setFixedSize(70, 28)
+        self.back_btn.setFixedSize(68, 28)
         self.back_btn.setCursor(Qt.PointingHandCursor)
         self.back_btn.clicked.connect(self.back_requested.emit)
 
-        self.title_lbl = QLabel("Sistem, Ağ, VLAN/MAC & NTP Ayarları")
+        self.title_lbl = QLabel("Ağ, VLAN/MAC & Sistem Ayarları")
         title_font = QFont("DejaVu Sans", 11, QFont.Bold)
         self.title_lbl.setFont(title_font)
 
         self.status_badge = QLabel("HAZIR")
         self.status_badge.setFont(QFont("DejaVu Sans Mono", 8, QFont.Bold))
+
+        self.btn_sys_info = QPushButton("ℹ️ Sistem Özellikleri")
+        self.btn_sys_info.setFixedHeight(28)
+        self.btn_sys_info.setCursor(Qt.PointingHandCursor)
+        self.btn_sys_info.clicked.connect(self._open_system_info_dialog)
 
         self.save_apply_btn = QPushButton("✓ Ağ Ayarlarını Uygula")
         self.save_apply_btn.setProperty("class", "PrimaryBtn")
@@ -209,6 +569,7 @@ class SettingsView(QWidget):
         header.addWidget(self.title_lbl)
         header.addStretch()
         header.addWidget(self.status_badge)
+        header.addWidget(self.btn_sys_info)
         header.addWidget(self.save_apply_btn)
 
         # 2. 2-Column Main Settings Layout
@@ -246,24 +607,32 @@ class SettingsView(QWidget):
         ip_grid.setVerticalSpacing(5)
 
         self.lbl_s_ip = QLabel("IP Adresi:")
-        self.edit_ip = QLineEdit()
-        self.edit_ip.setFixedHeight(25)
-        btn_k_ip = self._make_keypad_btn("Statik IP Adresi", self.edit_ip, "ip")
+        self.edit_ip = TouchableLineEdit()
+        self.edit_ip.setFixedHeight(26)
+        btn_k_ip = self._bind_touch_input(
+            "Statik IP Adresi", self.edit_ip, "ip", on_before_open=lambda: self._set_ip_mode("static")
+        )
 
         self.lbl_s_pfx = QLabel("Maske (/CIDR):")
-        self.edit_prefix = QLineEdit()
-        self.edit_prefix.setFixedHeight(25)
-        btn_k_pfx = self._make_keypad_btn("Alt Ağ CIDR (Örn: 24)", self.edit_prefix, "vlan")
+        self.edit_prefix = TouchableLineEdit()
+        self.edit_prefix.setFixedHeight(26)
+        btn_k_pfx = self._bind_touch_input(
+            "Alt Ağ CIDR (Örn: 24)", self.edit_prefix, "vlan", on_before_open=lambda: self._set_ip_mode("static")
+        )
 
         self.lbl_s_gw = QLabel("Ağ Geçidi:")
-        self.edit_gw = QLineEdit()
-        self.edit_gw.setFixedHeight(25)
-        btn_k_gw = self._make_keypad_btn("Ağ Geçidi (Gateway) IP", self.edit_gw, "ip")
+        self.edit_gw = TouchableLineEdit()
+        self.edit_gw.setFixedHeight(26)
+        btn_k_gw = self._bind_touch_input(
+            "Ağ Geçidi (Gateway) IP", self.edit_gw, "ip", on_before_open=lambda: self._set_ip_mode("static")
+        )
 
         self.lbl_s_dns = QLabel("DNS Sunucu:")
-        self.edit_dns = QLineEdit()
-        self.edit_dns.setFixedHeight(25)
-        btn_k_dns = self._make_keypad_btn("Birincil DNS IP", self.edit_dns, "ip")
+        self.edit_dns = TouchableLineEdit()
+        self.edit_dns.setFixedHeight(26)
+        btn_k_dns = self._bind_touch_input(
+            "Birincil DNS IP", self.edit_dns, "ip", on_before_open=lambda: self._set_ip_mode("static")
+        )
 
         ip_grid.addWidget(self.lbl_s_ip, 0, 0)
         ip_grid.addWidget(self.edit_ip, 0, 1)
@@ -320,19 +689,30 @@ class SettingsView(QWidget):
 
         l2_grid = QGridLayout()
         l2_grid.setHorizontalSpacing(6)
-        l2_grid.setVerticalSpacing(5)
+        l2_grid.setVerticalSpacing(6)
 
-        self.chk_vlan = QCheckBox("VLAN Etiketi (ID):")
+        # Large Tactile Toggle Buttons instead of tiny QCheckBoxes
+        self.chk_vlan = TactileToggleButton("VLAN: Kapalı", "VLAN: AKTİF")
         self.chk_vlan.toggled.connect(self._on_vlan_toggled)
-        self.edit_vlan = QLineEdit("100")
-        self.edit_vlan.setFixedHeight(25)
-        btn_k_vlan = self._make_keypad_btn("802.1Q VLAN ID (1-4094)", self.edit_vlan, "vlan")
+        self.edit_vlan = TouchableLineEdit("100")
+        self.edit_vlan.setFixedHeight(27)
+        btn_k_vlan = self._bind_touch_input(
+            "802.1Q VLAN ID (1-4094)",
+            self.edit_vlan,
+            "vlan",
+            on_before_open=lambda: self.chk_vlan.setChecked(True),
+        )
 
-        self.chk_mac = QCheckBox("Özel MAC Adresi:")
+        self.chk_mac = TactileToggleButton("Özel MAC: Kapalı", "Özel MAC: AKTİF")
         self.chk_mac.toggled.connect(self._on_mac_toggled)
-        self.edit_mac = QLineEdit()
-        self.edit_mac.setFixedHeight(25)
-        btn_k_mac = self._make_keypad_btn("Özel MAC Adresi (xx:xx:xx:xx:xx:xx)", self.edit_mac, "mac")
+        self.edit_mac = TouchableLineEdit()
+        self.edit_mac.setFixedHeight(27)
+        btn_k_mac = self._bind_touch_input(
+            "Özel MAC Adresi (xx:xx:xx:xx:xx:xx)",
+            self.edit_mac,
+            "mac",
+            on_before_open=lambda: self.chk_mac.setChecked(True),
+        )
 
         l2_grid.addWidget(self.chk_vlan, 0, 0)
         l2_grid.addWidget(self.edit_vlan, 0, 1)
@@ -372,9 +752,9 @@ class SettingsView(QWidget):
         ntp_row = QHBoxLayout()
         ntp_row.setSpacing(6)
         self.lbl_ntp_srv = QLabel("NTP Sunucu:")
-        self.edit_ntp = QLineEdit(config.DEFAULT_NTP_SERVER)
-        self.edit_ntp.setFixedHeight(25)
-        btn_k_ntp = self._make_keypad_btn("NTP Sunucu Adresi", self.edit_ntp, "host")
+        self.edit_ntp = TouchableLineEdit(config.DEFAULT_NTP_SERVER)
+        self.edit_ntp.setFixedHeight(26)
+        btn_k_ntp = self._bind_touch_input("NTP Sunucu Adresi", self.edit_ntp, "host")
 
         ntp_row.addWidget(self.lbl_ntp_srv)
         ntp_row.addWidget(self.edit_ntp, 1)
@@ -406,7 +786,7 @@ class SettingsView(QWidget):
         is_dark = ThemeManager.get_current_theme() == config.THEME_DARK
         colors = ThemeManager.get_colors()
         input_bg = "#020617" if is_dark else "#f8fafc"
-        disabled_bg = "#0f172a" if is_dark else "#cbd5e1"
+        inactive_bg = "#0f172a" if is_dark else "#e2e8f0"
 
         card_qss = f"""
             QFrame#SettingsCard {{
@@ -421,23 +801,17 @@ class SettingsView(QWidget):
             QLineEdit {{
                 background-color: {input_bg};
                 color: {colors['text_primary']};
-                border: 1px solid {colors['card_border']};
+                border: 1.5px solid {colors['accent_cyan']};
                 border-radius: 5px;
                 padding: 2px 6px;
                 font-family: "DejaVu Sans Mono", monospace;
                 font-size: 11px;
                 font-weight: bold;
             }}
-            QLineEdit:disabled {{
-                background-color: {disabled_bg};
+            QLineEdit[activeInput="false"] {{
+                background-color: {inactive_bg};
                 color: {colors['text_muted']};
-                border: 1px solid {colors['card_border']};
-            }}
-            QCheckBox {{
-                color: {colors['text_primary']};
-                font-weight: bold;
-                font-size: 11px;
-                spacing: 6px;
+                border: 1px dashed {colors['card_border']};
             }}
         """
         for card in (self.card_ip, self.card_l2, self.card_ntp):
@@ -449,7 +823,18 @@ class SettingsView(QWidget):
             color: {colors['text_secondary']};
             border: 1px solid {colors['card_border']};
             border-radius: 4px;
-            padding: 2px 8px;
+            padding: 2px 6px;
+        """)
+        self.btn_sys_info.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {'#1e1b4b' if is_dark else '#e0e7ff'};
+                color: {colors['accent_indigo']};
+                border: 1.5px solid {colors['accent_indigo']};
+                border-radius: 6px;
+                padding: 2px 8px;
+                font-size: 10px;
+                font-weight: 800;
+            }}
         """)
         self.lbl_ip_hdr.setStyleSheet(f"color: {colors['accent_cyan']}; font-weight: 900; font-size: 11px;")
         self.lbl_l2_hdr.setStyleSheet(f"color: {colors['status_success']}; font-weight: 900; font-size: 11px;")
@@ -480,24 +865,38 @@ class SettingsView(QWidget):
             }
         """)
 
+        self.chk_vlan._refresh_appearance(self.chk_vlan.isChecked())
+        self.chk_mac._refresh_appearance(self.chk_mac.isChecked())
         self._set_ip_mode(self.manager.settings.ip_mode)
         self._update_theme_buttons(ThemeManager.get_current_theme())
 
-    def _make_keypad_btn(self, title: str, line_edit: QLineEdit, mode: str) -> QPushButton:
-        btn = QPushButton("Gir")
-        btn.setFixedSize(36, 25)
-        btn.setStyleSheet("font-size: 10px; font-weight: bold; padding: 1px 4px;")
-        btn.setToolTip(f"{title} (Dokunmatik Tuş Takımı)")
+    def _bind_touch_input(
+        self, title: str, line_edit: TouchableLineEdit, mode: str, on_before_open=None
+    ) -> QPushButton:
+        """Bind both direct touch on the input field AND the side keypad button to open TouchKeypadDialog."""
+        def _trigger():
+            if callable(on_before_open):
+                on_before_open()
+            self._open_keypad(title, line_edit, mode)
+
+        line_edit.tapped.connect(_trigger)
+
+        btn = QPushButton("⌨")
+        btn.setFixedSize(32, 26)
+        btn.setStyleSheet("font-size: 12px; font-weight: bold; padding: 1px 4px;")
+        btn.setToolTip(f"{title} (Dokunmatik Klavye)")
         btn.setCursor(Qt.PointingHandCursor)
-        btn.clicked.connect(lambda: self._open_keypad(title, line_edit, mode))
+        btn.clicked.connect(_trigger)
         return btn
 
     def _open_keypad(self, title: str, line_edit: QLineEdit, mode: str):
-        if not line_edit.isEnabled():
-            return
         dlg = TouchKeypadDialog(title=title, initial_value=line_edit.text(), mode=mode, parent=self)
         if dlg.exec() == QDialog.Accepted:
             line_edit.setText(dlg.result_text)
+
+    def _open_system_info_dialog(self):
+        dlg = SystemInfoDialog(manager=self.manager, parent=self)
+        dlg.exec()
 
     def _load_values_into_ui(self):
         s = self.manager.settings
@@ -508,13 +907,14 @@ class SettingsView(QWidget):
 
         self.chk_vlan.setChecked(s.vlan_enabled)
         self.edit_vlan.setText(str(s.vlan_id))
-        self.edit_vlan.setEnabled(s.vlan_enabled)
+        self.edit_vlan.set_visually_active(s.vlan_enabled)
 
         self.chk_mac.setChecked(s.custom_mac_enabled)
         self.edit_mac.setText(s.custom_mac)
-        self.edit_mac.setEnabled(s.custom_mac_enabled)
+        self.edit_mac.set_visually_active(s.custom_mac_enabled)
 
         self.edit_ntp.setText(s.ntp_server or config.DEFAULT_NTP_SERVER)
+        self.edit_ntp.set_visually_active(True)
 
         self._set_ip_mode(s.ip_mode)
         self._update_theme_buttons(ThemeManager.get_current_theme())
@@ -524,10 +924,9 @@ class SettingsView(QWidget):
         self.manager.settings.ip_mode = mode
         is_static = (mode == "static")
 
-        self.edit_ip.setEnabled(is_static)
-        self.edit_prefix.setEnabled(is_static)
-        self.edit_gw.setEnabled(is_static)
-        self.edit_dns.setEnabled(is_static)
+        # Keep inputs touch-responsive so tapping them in DHCP mode auto-switches to Static IP and opens keypad!
+        for ed in (self.edit_ip, self.edit_prefix, self.edit_gw, self.edit_dns):
+            ed.set_visually_active(is_static)
 
         active_style = f"background-color: {colors['accent_cyan']}; color: #ffffff; border: 1.5px solid {colors['accent_cyan']}; font-weight: 800;"
         inactive_style = f"background-color: {colors['bg_main']}; color: {colors['text_secondary']}; border: 1px solid {colors['card_border']};"
@@ -536,10 +935,10 @@ class SettingsView(QWidget):
         self.btn_mode_static.setStyleSheet(active_style if is_static else inactive_style)
 
     def _on_vlan_toggled(self, checked: bool):
-        self.edit_vlan.setEnabled(checked)
+        self.edit_vlan.set_visually_active(checked)
 
     def _on_mac_toggled(self, checked: bool):
-        self.edit_mac.setEnabled(checked)
+        self.edit_mac.set_visually_active(checked)
 
     def _reset_to_factory_mac(self):
         perm = self.manager.get_permanent_mac("eth0")
@@ -610,7 +1009,7 @@ class SettingsView(QWidget):
             color: {fg};
             border: 1px solid {fg};
             border-radius: 4px;
-            padding: 2px 8px;
+            padding: 2px 6px;
         """)
         self.lbl_ntp_status.setText(msg)
 

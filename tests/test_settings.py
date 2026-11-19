@@ -45,3 +45,34 @@ def test_settings_validation_and_persistence(tmp_path: Path):
     ok_ntp, msg_ntp = mgr.sync_ntp_time("time.deu.edu.tr")
     assert ok_ntp is True
     assert "time.deu.edu.tr" in msg_ntp
+
+
+def test_system_info_and_tactile_settings_widgets():
+    import os
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+    from cirak.gui.views.settings_view import SystemInfoDialog, SettingsView
+
+    app = QApplication.instance() or QApplication([])
+    assert app is not None
+
+    specs = SystemInfoDialog.collect_system_specs()
+    assert "0.3.2" in specs["sw_version"]
+    assert specs["hw_model"] != ""
+    assert specs["ram_info"] != ""
+    assert specs["disk_info"] != ""
+    assert specs["os_kernel"] != ""
+
+    view = SettingsView()
+
+    # Verify tactile VLAN and MAC toggle buttons work cleanly
+    assert view.chk_vlan.isCheckable() is True
+    view.chk_vlan.setChecked(True)
+    assert view.chk_vlan.isChecked() is True
+    assert "AKTİF" in view.chk_vlan.text()
+
+    view.chk_mac.setChecked(True)
+    assert view.chk_mac.isChecked() is True
+    assert "AKTİF" in view.chk_mac.text()
+
+

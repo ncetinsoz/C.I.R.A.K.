@@ -265,26 +265,33 @@ class LLDPCdpTest(BaseTest):
                 details=info.__dict__
             )
 
-        # 3. Fallback L2 MAC / Gateway OUI inspection for unmanaged/unauthorized switches
+        # 3. Active L2/L3 Gateway & Neighbor Discovery (TP-Link / Home Routers / Unmanaged Switches)
+        gw_dev = NetworkDetector.probe_gateway_device(self.interface)
+        if gw_dev and (gw_dev.get("system_name") or gw_dev.get("chassis_id")):
+            try:
+                gw_info_obj = LLDPInfo(
+                    **{k: v for k, v in gw_dev.items() if k in LLDPInfo.__dataclass_fields__}
+                )
+                with self._bg_lock:
+                    self._cached_stp_nac[self.interface] = gw_info_obj
+            except Exception:
+                pass
+            is_unauth = bool(gw_dev.get("is_unauthorized_switch", False))
+            status = TestStatus.WARNING if is_unauth else TestStatus.PASSED
+            summary = (
+                f"[{gw_dev.get('protocol', 'L2-ARP')}] {gw_dev.get('system_name')} "
+                f"| IP: {gw_dev.get('management_ip', '--')} | MAC: {gw_dev.get('chassis_id', '--')}"
+            )
+            return self._create_result(
+                status=status,
+                start_time=start_time,
+                summary=summary,
+                details=gw_dev,
+            )
+
+        # 4. No CDP/LLDP or L2 gateway response detected
         gw_info = NetworkDetector.get_default_gateway()
         gw_mac = NetworkDetector.get_gateway_mac(gw_info["gateway"]) if gw_info else None
-        if gw_mac:
-            vendor, is_unauth = NetworkDetector.identify_mac_vendor(gw_mac)
-            if is_unauth:
-                return self._create_result(
-                    status=TestStatus.WARNING,
-                    start_time=start_time,
-                    summary=f"UYARI: Tüketici Cihazı ({vendor}) | CDP/LLDP Yok",
-                    details={
-                        "system_name": f"Yetkisiz/Yönetimsiz Cihaz ({vendor})",
-                        "chassis_id": gw_mac,
-                        "vendor": vendor,
-                        "protocol": "L2-MAC",
-                        "is_unauthorized_switch": True,
-                    }
-                )
-
-        # 4. No CDP/LLDP packet received within window
         return self._create_result(
             status=TestStatus.WARNING,
             start_time=start_time,
@@ -300,7 +307,8 @@ class LLDPCdpTest(BaseTest):
         return LLDPInfo(
             chassis_id="94:33:d8:2a:01:ef",
             system_name="Catalyst-9300",
-            system_description="Cisco IOS-XE Catalyst 9300 Series Switch",
+            system_description="Cisco Catalyst 9300-24T",
+            software_version="Cisco IOS-XE 17.09.04a (UNIVERSALK9)",
             port_id="Gi1/0/24",
             port_description="Kenar Switch Port 24",
             vlan_id=102,
@@ -407,7 +415,10 @@ class LLDPCdpTest(BaseTest):
                     info.system_name = val.decode("utf-8", errors="ignore").strip()
                 elif tlv_type == 6:
                     descr = val.decode("utf-8", errors="ignore").strip()
-                    info.system_description = descr.splitlines()[0] if descr else ""
+                    m_clean, s_clean = NetworkDetector.extract_model_and_ios(descr)
+                    info.system_description = m_clean or (descr.splitlines()[0] if descr else "")
+                    if s_clean:
+                        info.software_version = s_clean
                 elif tlv_type == 8:
                     mgmt = self._format_mgmt_address(val)
                     if mgmt:
@@ -432,7 +443,7 @@ class LLDPCdpTest(BaseTest):
     ) -> Optional[LLDPInfo]:
         """
         Parse Cisco Discovery Protocol (CDPv1/v2) frame.
-        Extracts Device ID, Port ID, Platform/Model, Native VLAN, Management IP, and Capabilities.
+        Extracts Device ID, Port ID, Platform/Model, Software/IOS Version, Native VLAN, Management IP, and Capabilities.
         """
         info = LLDPInfo(protocol="CDP", chassis_id=src_mac, vlan_id=dot1q_vlan)
         try:
@@ -481,14 +492,25 @@ class LLDPCdpTest(BaseTest):
                     if cap_bits & 0x20:
                         caps.append("IGMP")
                     info.capabilities = ", ".join(caps)
-                elif field_type == 0x0005 and not info.system_description:  # Software Version
-                    ver_lines = [ln.strip() for ln in val.decode("utf-8", errors="ignore").splitlines() if ln.strip()]
-                    if ver_lines:
-                        info.system_description = ver_lines[0][:60]
+                elif field_type == 0x0005:  # Software Version (Cisco IOS / IOS-XE / NX-OS)
+                    raw_ver = val.decode("utf-8", errors="ignore").strip("\x00").strip()
+                    if raw_ver:
+                        _, sw_clean = NetworkDetector.extract_model_and_ios("", sw_ver=raw_ver)
+                        info.software_version = sw_clean or raw_ver.splitlines()[0][:64]
+                        if not info.system_description:
+                            info.system_description = info.software_version
                 elif field_type == 0x0006:  # Platform / Hardware Model (e.g. cisco WS-C2960X-24TS-L)
                     platform = val.decode("utf-8", errors="ignore").strip("\x00").strip()
                     if platform:
-                        info.system_description = platform
+                        if " runs on " in platform.lower():
+                            m_clean, s_clean = NetworkDetector.extract_model_and_ios(
+                                platform, sw_ver=info.software_version
+                            )
+                            info.system_description = m_clean or platform
+                            if s_clean and not info.software_version:
+                                info.software_version = s_clean
+                        else:
+                            info.system_description = platform
                 elif field_type == 0x000A and len(val) >= 2:  # Native VLAN
                     info.vlan_id = struct.unpack("!H", val[:2])[0]
                 elif field_type == 0x000B and len(val) >= 1:  # Duplex

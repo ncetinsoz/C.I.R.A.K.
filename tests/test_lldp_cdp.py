@@ -123,3 +123,36 @@ def test_ignore_local_cirak_self_packets():
     assert res is None
 
 
+def test_extract_model_and_ios_and_tplink_discovery():
+    from cirak.backend.network_detector import NetworkDetector
+
+    # 1. lldpd 'runs on' concatenation splitting (Cisco 2960X + IOS version)
+    raw_lldpd_descr = (
+        "cisco WS-C2960X-24TS-L runs on Cisco IOS Software, C2960X Software "
+        "(C2960X-UNIVERSALK9-M), Version 15.2(7)E4, RELEASE SOFTWARE (fc2)"
+    )
+    model, ios_ver = NetworkDetector.extract_model_and_ios(raw_lldpd_descr)
+    assert model == "Cisco WS-C2960X-24TS-L"
+    assert "15.2(7)E4" in ios_ver
+    assert "UNIVERSALK9" in ios_ver
+
+    # 2. CDP synthetic frame with both TLV 0x0005 (Software Version) and TLV 0x0006 (Platform)
+    test = LLDPCdpTest()
+    llc_snap = b"\xaa\xaa\x03\x00\x00\x0c\x20\x00"
+    cdp_hdr = struct.pack("!BBH", 2, 180, 0)
+    dev_id = b"DEU-SW-2960X"
+    tlv_dev = struct.pack("!HH", 0x0001, 4 + len(dev_id)) + dev_id
+    sw_raw = b"Cisco IOS Software, C2960X Software (C2960X-UNIVERSALK9-M), Version 15.2(7)E4, RELEASE SOFTWARE"
+    tlv_sw = struct.pack("!HH", 0x0005, 4 + len(sw_raw)) + sw_raw
+    plat_raw = b"cisco WS-C2960X-24TS-L"
+    tlv_plat = struct.pack("!HH", 0x0006, 4 + len(plat_raw)) + plat_raw
+
+    parsed = test.parse_cdp_frame(llc_snap + cdp_hdr + tlv_dev + tlv_sw + tlv_plat, src_mac="94:33:d8:2a:01:ef")
+    assert parsed is not None
+    assert parsed.system_description == "cisco WS-C2960X-24TS-L"
+    assert "15.2(7)E4" in parsed.software_version
+
+    # 3. TP-Link SOHO router/switch OUI recognition
+    vendor, is_unauth = NetworkDetector.identify_mac_vendor("b0:be:76:11:22:33")
+    assert "TP-Link" in vendor
+    assert is_unauth is True
