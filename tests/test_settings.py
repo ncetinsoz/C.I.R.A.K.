@@ -57,7 +57,7 @@ def test_system_info_and_tactile_settings_widgets():
     assert app is not None
 
     specs = SystemInfoDialog.collect_system_specs()
-    assert "0.3.2" in specs["sw_version"]
+    assert "0.4.0" in specs["sw_version"]
     assert specs["hw_model"] != ""
     assert specs["ram_info"] != ""
     assert specs["disk_info"] != ""
@@ -74,5 +74,7 @@ def test_system_info_and_tactile_settings_widgets():
     view.chk_mac.setChecked(True)
     assert view.chk_mac.isChecked() is True
     assert "AKTİF" in view.chk_mac.text()
+    view.clock_timer.stop()
+    view.close()
 
 

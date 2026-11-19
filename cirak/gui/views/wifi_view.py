@@ -61,6 +61,12 @@ class WiFiView(QWidget):
         badge_font = QFont("DejaVu Sans Mono", 9, QFont.Bold)
         self.ap_count_badge.setFont(badge_font)
 
+        self.connect_btn = QPushButton("🔗 Ağa Bağlan")
+        self.connect_btn.setFixedHeight(30)
+        self.connect_btn.setCursor(Qt.PointingHandCursor)
+        self.connect_btn.setToolTip("Seçili ağa veya eduroam (802.1X) ağına bağlan")
+        self.connect_btn.clicked.connect(self._open_connect_dialog)
+
         self.rescan_btn = QPushButton("🔄 Yeniden Tara")
         self.rescan_btn.setProperty("class", "PrimaryBtn")
         self.rescan_btn.setFixedHeight(30)
@@ -71,6 +77,7 @@ class WiFiView(QWidget):
         header.addWidget(self.title_lbl)
         header.addStretch()
         header.addWidget(self.ap_count_badge)
+        header.addWidget(self.connect_btn)
         header.addWidget(self.rescan_btn)
 
         # 2. Filter & Spectrum Summary Bar
@@ -117,6 +124,7 @@ class WiFiView(QWidget):
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.table.verticalHeader().setVisible(False)
         self.table.setShowGrid(False)
+        self.table.cellDoubleClicked.connect(lambda _r, _c: self._open_connect_dialog())
 
         header_view = self.table.horizontalHeader()
         header_view.setSectionResizeMode(0, QHeaderView.ResizeToContents)
@@ -155,6 +163,18 @@ class WiFiView(QWidget):
         self.lbl_channel_rec.setStyleSheet(f"background: transparent; color: {colors['status_success']}; font-weight: bold;")
         self.lbl_connected.setStyleSheet(f"background: transparent; color: {colors['accent_cyan']};")
 
+        self.connect_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {colors['status_success']};
+                color: #ffffff;
+                border: 1px solid {colors['status_success']};
+                border-radius: 6px;
+                padding: 3px 10px;
+                font-size: 11px;
+                font-weight: 800;
+            }}
+        """)
+
         self.table.setStyleSheet(f"""
             QTableWidget {{
                 background-color: {colors['card_bg']};
@@ -183,6 +203,23 @@ class WiFiView(QWidget):
             }}
         """)
         self._populate_table()
+
+    def _open_connect_dialog(self):
+        """Open touch-optimized Wi-Fi Connection Dialog for the selected AP (or default eduroam)."""
+        from cirak.gui.dialogs.wifi_connect_dialog import WiFiConnectDialog
+        init_ssid = ""
+        init_sec = ""
+        row = self.table.currentRow()
+        if row >= 0:
+            ssid_item = self.table.item(row, 1)
+            sec_item = self.table.item(row, 4)
+            if ssid_item:
+                init_ssid = ssid_item.text().replace("● ", "").strip()
+            if sec_item:
+                init_sec = sec_item.text().strip()
+        dlg = WiFiConnectDialog(initial_ssid=init_ssid, initial_security=init_sec, parent=self.window())
+        dlg.connection_changed.connect(self.start_scan)
+        dlg.exec()
 
     def _set_filter(self, filter_mode: str):
         self.current_filter = filter_mode

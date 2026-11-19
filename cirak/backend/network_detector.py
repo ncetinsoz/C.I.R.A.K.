@@ -662,11 +662,35 @@ class NetworkDetector:
         and Unmanaged Switches that do not transmit Cisco CDP or IEEE LLDP frames.
         """
         target_iface = iface or cls.get_active_interface()
+        gw_info = cls.get_default_gateway()
+        gw_ip = gw_info["gateway"] if gw_info else ""
+
+        # If running over wireless (wlan0), discover the associated Access Point (AP) & Gateway
+        if target_iface.startswith("wlan"):
+            try:
+                from cirak.backend.wifi_scanner import WiFiScanner
+                ap = WiFiScanner(interface=target_iface, simulate=False).get_active_ap_telemetry()
+                if ap:
+                    return {
+                        "system_name": f"AP: {ap['ssid']} ({ap['vendor']})"[:38],
+                        "system_description": f"{ap['vendor']} Kablosuz Erişim Noktası (AP)"[:42],
+                        "software_version": f"802.11 {ap['channel']} | Sinyal: {ap['signal_dbm']} dBm | Hız: {ap['bitrate_mbps']} Mbps",
+                        "port_id": f"Radyo: {ap['channel']}",
+                        "port_description": f"{ap['signal_dbm']} dBm",
+                        "vlan_id": None,
+                        "vlan_name": f"SSID: {ap['ssid']}",
+                        "management_ip": gw_ip or "Kablosuz AP",
+                        "chassis_id": ap["bssid"],
+                        "protocol": "Wi-Fi AP (802.11)",
+                        "vendor": ap["vendor"],
+                        "is_unauthorized_switch": ap.get("is_unauth") == "1",
+                    }
+            except Exception:
+                pass
+
         if not cls.get_carrier(target_iface):
             return None
 
-        gw_info = cls.get_default_gateway()
-        gw_ip = gw_info["gateway"] if gw_info else ""
         gw_mac = cls.get_gateway_mac(gw_ip) if gw_ip else None
 
         # Fallback: check any active neighbor MAC on target_iface in /proc/net/arp

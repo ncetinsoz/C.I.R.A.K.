@@ -482,3 +482,325 @@ class WiFiScanner:
             scan_duration_ms=(time.perf_counter() - t_start) * 1000.0,
             status_message="Simülasyon Modu",
         )
+
+    # =========================================================================
+    # Wi-Fi Connection Engine: 802.1X Enterprise (DEÜ eduroam), WPA2/WPA3-PSK, Open
+    # =========================================================================
+    def connect_network(
+        self,
+        ssid: str,
+        auth_mode: str = "eap",      # "eap" (802.1X eduroam), "psk" (WPA2/WPA3), "open"
+        identity: str = "",          # e.g. ad.soyad@deu.edu.tr or ogrencino@ogr.deu.edu.tr
+        password: str = "",
+        eap_method: str = "ttls",    # "ttls" (DEÜ Varsayılan) or "peap"
+        phase2_auth: str = "pap",    # "pap" (DEÜ TTLS Varsayılan) or "mschapv2"
+    ) -> tuple[bool, str]:
+        """
+        Connect wlan0 to a wireless network using NetworkManager (nmcli) or wpa_supplicant (wpa_cli).
+        For DEÜ eduroam (https://bid.deu.edu.tr/eduroam/), defaults to EAP-TTLS + Phase2 PAP
+        with no external CA certificate file requirement.
+        """
+        clean_ssid = ssid.strip()
+        if not clean_ssid:
+            return False, "Hata: Geçerli bir Wi-Fi ağ adı (SSID) seçilmedi."
+
+        mode = auth_mode.lower().strip()
+        eap = eap_method.lower().strip() if eap_method.lower().strip() in ("ttls", "peap") else "ttls"
+        p2 = phase2_auth.lower().strip() if phase2_auth.lower().strip() in ("pap", "mschapv2") else "pap"
+
+        if mode == "eap":
+            if not identity.strip() or not password:
+                return False, "Hata: 802.1X (eduroam) için kurumsal e-posta ve parola zorunludur."
+        elif mode == "psk":
+            if len(password) < 8:
+                return False, "Hata: WPA2/WPA3 ağ parolası en az 8 karakter olmalıdır."
+
+        if self.simulate:
+            time.sleep(0.2)
+            if mode == "eap":
+                return True, f"✓ {clean_ssid} ağına 802.1X ({eap.upper()}/{p2.upper()}) ile bağlanıldı ({identity})"
+            return True, f"✓ {clean_ssid} kablosuz ağına bağlanıldı."
+
+        self._ensure_wlan_up()
+
+        # 1. Try NetworkManager (nmcli) first (Default on Raspberry Pi OS Bookworm)
+        if shutil.which("nmcli"):
+            ok, msg = self._connect_via_nmcli(clean_ssid, mode, identity.strip(), password, eap, p2)
+            if ok:
+                return True, msg
+
+        # 2. Fallback to wpa_cli / wpa_supplicant (Raspberry Pi OS Bullseye / dhcpcd)
+        if shutil.which("wpa_cli"):
+            ok, msg = self._connect_via_wpa_cli(clean_ssid, mode, identity.strip(), password, eap, p2)
+            if ok:
+                return True, msg
+
+        return False, f"{clean_ssid} ağına bağlanılamadı (Kimlik bilgilerini veya sinyal gücünü kontrol edin)."
+
+    def _connect_via_nmcli(
+        self, ssid: str, mode: str, identity: str, password: str, eap: str, phase2: str
+    ) -> tuple[bool, str]:
+        prof_name = f"cirak-wifi-{re.sub(r'[^a-zA-Z0-9_-]', '_', ssid)[:24]}"
+        for prefix in ([], ["sudo", "-n"]):
+            try:
+                # Ensure NetworkManager Wi-Fi radio is enabled
+                subprocess.run(
+                    prefix + ["nmcli", "radio", "wifi", "on"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=3,
+                )
+                # Remove existing temporary profile with same name or SSID to avoid conflicts
+                for old_name in (prof_name, ssid):
+                    subprocess.run(
+                        prefix + ["nmcli", "connection", "delete", old_name],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        timeout=3,
+                    )
+
+                if mode == "eap":
+                    add_cmd = prefix + [
+                        "nmcli", "connection", "add",
+                        "type", "wifi",
+                        "con-name", prof_name,
+                        "ifname", self.interface,
+                        "ssid", ssid,
+                        "wifi-sec.key-mgmt", "wpa-eap",
+                        "802-1x.eap", eap,
+                        "802-1x.phase2-auth", phase2,
+                        "802-1x.identity", identity,
+                        "802-1x.password", password,
+                        "ipv4.method", "auto",
+                    ]
+                elif mode == "psk":
+                    add_cmd = prefix + [
+                        "nmcli", "connection", "add",
+                        "type", "wifi",
+                        "con-name", prof_name,
+                        "ifname", self.interface,
+                        "ssid", ssid,
+                        "wifi-sec.key-mgmt", "wpa-psk",
+                        "wifi-sec.psk", password,
+                        "ipv4.method", "auto",
+                    ]
+                else:
+                    add_cmd = prefix + [
+                        "nmcli", "connection", "add",
+                        "type", "wifi",
+                        "con-name", prof_name,
+                        "ifname", self.interface,
+                        "ssid", ssid,
+                        "ipv4.method", "auto",
+                    ]
+
+                res_add = subprocess.run(
+                    add_cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    timeout=6,
+                )
+                if res_add.returncode != 0:
+                    continue
+
+                res_up = subprocess.run(
+                    prefix + ["nmcli", "--wait", "20", "connection", "up", prof_name],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    timeout=23,
+                )
+                if res_up.returncode == 0:
+                    time.sleep(0.6)
+                    ip_cidr = NetworkDetector.get_ip_address_cidr(self.interface) or "DHCP Bekleniyor"
+                    return True, f"✓ {ssid} ağına bağlanıldı (IP: {ip_cidr.split('/')[0]})"
+            except Exception:
+                continue
+        return False, "NetworkManager (nmcli) bağlantısı başarısız."
+
+    def _connect_via_wpa_cli(
+        self, ssid: str, mode: str, identity: str, password: str, eap: str, phase2: str
+    ) -> tuple[bool, str]:
+        for prefix in ([], ["sudo", "-n"]):
+            try:
+                res = subprocess.run(
+                    prefix + ["wpa_cli", "-i", self.interface, "add_network"],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
+                    text=True,
+                    timeout=3,
+                )
+                if res.returncode != 0 or not res.stdout.strip().splitlines()[-1].isdigit():
+                    continue
+                net_id = res.stdout.strip().splitlines()[-1]
+
+                def _set_var(key: str, val: str):
+                    subprocess.run(
+                        prefix + ["wpa_cli", "-i", self.interface, "set_network", net_id, key, val],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        timeout=3,
+                    )
+
+                _set_var("ssid", f'"{ssid}"')
+                if mode == "eap":
+                    _set_var("key_mgmt", "WPA-EAP")
+                    _set_var("eap", eap.upper())
+                    _set_var("identity", f'"{identity}"')
+                    _set_var("password", f'"{password}"')
+                    _set_var("phase2", f'"auth={phase2.upper()}"')
+                elif mode == "psk":
+                    _set_var("psk", f'"{password}"')
+                else:
+                    _set_var("key_mgmt", "NONE")
+
+                subprocess.run(
+                    prefix + ["wpa_cli", "-i", self.interface, "enable_network", net_id],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=3,
+                )
+                subprocess.run(
+                    prefix + ["wpa_cli", "-i", self.interface, "select_network", net_id],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=3,
+                )
+
+                # Wait up to 12s for WPA association
+                associated = False
+                for _ in range(12):
+                    time.sleep(1.0)
+                    st = subprocess.run(
+                        prefix + ["wpa_cli", "-i", self.interface, "status"],
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.DEVNULL,
+                        text=True,
+                        timeout=2,
+                    )
+                    if "wpa_state=COMPLETED" in st.stdout:
+                        associated = True
+                        break
+
+                if associated:
+                    if not NetworkDetector.get_ip_address_cidr(self.interface):
+                        for dh_cmd in (["dhclient", "-1", self.interface], ["udhcpc", "-i", self.interface, "-n", "-q"]):
+                            if shutil.which(dh_cmd[0]):
+                                subprocess.run(
+                                    prefix + dh_cmd,
+                                    stdout=subprocess.DEVNULL,
+                                    stderr=subprocess.DEVNULL,
+                                    timeout=8,
+                                )
+                                break
+                    ip_cidr = NetworkDetector.get_ip_address_cidr(self.interface) or "Bağlı"
+                    return True, f"✓ {ssid} ağına bağlanıldı (IP: {ip_cidr.split('/')[0]})"
+            except Exception:
+                continue
+        return False, "wpa_supplicant bağlantısı zaman aşımına uğradı."
+
+    def disconnect_network(self) -> tuple[bool, str]:
+        """Disconnect wlan0 from current Wi-Fi network."""
+        if self.simulate:
+            return True, "Kablosuz ağ bağlantısı kesildi."
+
+        for prefix in ([], ["sudo", "-n"]):
+            if shutil.which("nmcli"):
+                try:
+                    res = subprocess.run(
+                        prefix + ["nmcli", "device", "disconnect", self.interface],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        timeout=5,
+                    )
+                    if res.returncode == 0:
+                        return True, "Wi-Fi bağlantısı kesildi."
+                except Exception:
+                    pass
+            if shutil.which("wpa_cli"):
+                try:
+                    res = subprocess.run(
+                        prefix + ["wpa_cli", "-i", self.interface, "disconnect"],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        timeout=4,
+                    )
+                    if res.returncode == 0:
+                        return True, "Wi-Fi bağlantısı kesildi."
+                except Exception:
+                    pass
+        return False, "Wi-Fi bağlantısı kesilemedi veya zaten bağlı değil."
+
+    def get_active_ap_telemetry(self) -> Optional[Dict[str, str]]:
+        """
+        Return rich Access Point telemetry (SSID, BSSID MAC, Vendor OUI, Frequency/Channel,
+        Signal dBm, TX Bitrate Mbps) when wlan0 is connected to an AP.
+        """
+        if self.simulate:
+            return {
+                "ssid": "eduroam",
+                "bssid": "d8:b1:90:3a:42:11",
+                "vendor": "Cisco Systems",
+                "freq_mhz": "5180",
+                "channel": "36 (5 GHz)",
+                "signal_dbm": "-48",
+                "bitrate_mbps": "433",
+            }
+        if not shutil.which("iw"):
+            return None
+        try:
+            res = subprocess.run(
+                ["iw", "dev", self.interface, "link"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+                timeout=1.5,
+            )
+            if res.returncode != 0 or "Connected to " not in res.stdout:
+                return None
+
+            bssid = ""
+            ssid = ""
+            freq = 0
+            sig = -70
+            bitrate = 0
+            for ln in res.stdout.splitlines():
+                ln = ln.strip()
+                if ln.startswith("Connected to "):
+                    bssid = ln.split()[2].lower()
+                elif ln.startswith("SSID:"):
+                    ssid = ln.split(":", 1)[1].strip()
+                elif ln.startswith("freq:"):
+                    try:
+                        freq = int(float(ln.split()[1]))
+                    except Exception:
+                        pass
+                elif ln.startswith("signal:"):
+                    try:
+                        sig = int(float(ln.split()[1]))
+                    except Exception:
+                        pass
+                elif "bitrate:" in ln:
+                    m = re.search(r"(\d+(?:\.\d+)?)\s*MBit/s", ln)
+                    if m:
+                        bitrate = int(float(m.group(1)))
+
+            if not bssid:
+                return None
+            chan = self._freq_to_channel(freq) if freq else 1
+            band = "5 GHz" if freq > 3000 else "2.4 GHz"
+            vendor, is_unauth = NetworkDetector.identify_mac_vendor(bssid)
+            return {
+                "ssid": ssid or "Wi-Fi AP",
+                "bssid": bssid,
+                "vendor": vendor,
+                "is_unauth": "1" if is_unauth else "0",
+                "freq_mhz": str(freq),
+                "channel": f"Kanal {chan} ({band})",
+                "signal_dbm": str(sig),
+                "bitrate_mbps": str(bitrate or (300 if freq > 3000 else 144)),
+            }
+        except Exception:
+            return None
+

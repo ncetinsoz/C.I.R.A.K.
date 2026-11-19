@@ -285,10 +285,13 @@ class TopBar(QFrame):
         self.eth_box.addWidget(self.eth_icon_label)
         self.eth_box.addWidget(self.eth_text_label)
 
-        # Wi-Fi Status (Vector SVG icon)
-        self.wifi_icon_label = QLabel()
-        self.wifi_icon_label.setFixedSize(18, 18)
-        self.wifi_icon_label.setStyleSheet("background: transparent;")
+        # Wi-Fi Status & Connection Button (Touchable vector SVG icon + label)
+        self.wifi_btn = QPushButton(" Wi-Fi")
+        self.wifi_btn.setFixedHeight(26)
+        self.wifi_btn.setCursor(Qt.PointingHandCursor)
+        self.wifi_btn.setToolTip("Kablosuz Ağa Bağlan (eduroam 802.1X / WPA2)")
+        self.wifi_btn.setIconSize(QSize(15, 15))
+        self.wifi_btn.clicked.connect(self._open_wifi_connect_dialog)
 
         # Power Status (Lightning SVG + voltage text)
         self.power_box = QHBoxLayout()
@@ -322,7 +325,7 @@ class TopBar(QFrame):
         self.power_btn.clicked.connect(self._open_power_dialog)
 
         right_box.addLayout(self.eth_box)
-        right_box.addWidget(self.wifi_icon_label)
+        right_box.addWidget(self.wifi_btn)
         right_box.addLayout(self.power_box)
         right_box.addWidget(self.clock_label)
         right_box.addWidget(self.power_btn)
@@ -332,6 +335,12 @@ class TopBar(QFrame):
         # Set initial network telemetry
         self.update_eth_status(connected=False, speed_mbps=0)
         self.update_wifi_status(connected=False)
+
+    def _open_wifi_connect_dialog(self):
+        from cirak.gui.dialogs.wifi_connect_dialog import WiFiConnectDialog
+        dlg = WiFiConnectDialog(parent=self.window())
+        dlg.connection_changed.connect(lambda: self.update_wifi_status(True))
+        dlg.exec()
 
     def _open_power_dialog(self):
         dlg = PowerDialog(self.window())
@@ -407,12 +416,30 @@ class TopBar(QFrame):
         self.eth_text_label.setStyleSheet(f"background: transparent; color: {color}; font-weight: 700;")
 
     def update_wifi_status(self, connected: bool = True):
-        """Update Wi-Fi vector icon."""
+        """Update touchable Wi-Fi vector button in TopBar."""
         self._wifi_connected = connected
         is_dark = ThemeManager.get_current_theme() == config.THEME_DARK
-        color = ("#22d3ee" if is_dark else "#0369a1") if connected else ("#64748b" if is_dark else "#475569")
-        pix = get_svg_pixmap("wifi", color=color, size=18)
-        self.wifi_icon_label.setPixmap(pix)
+        fg = ("#22d3ee" if is_dark else "#0369a1") if connected else ("#94a3b8" if is_dark else "#475569")
+        bg = ("#083344" if is_dark else "#e0f2fe") if connected else ("#1e293b" if is_dark else "#cbd5e1")
+        border = fg if connected else ("#334155" if is_dark else "#94a3b8")
+        pix = get_svg_pixmap("wifi", color=fg, size=15)
+        self.wifi_btn.setIcon(QIcon(pix))
+        self.wifi_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {bg};
+                color: {fg};
+                border: 1px solid {border};
+                border-radius: 5px;
+                padding: 2px 7px;
+                font-family: "DejaVu Sans Mono", monospace;
+                font-size: 10px;
+                font-weight: 800;
+            }}
+            QPushButton:pressed {{
+                background-color: {fg};
+                color: #ffffff;
+            }}
+        """)
 
     def update_theme_icon(self):
         """Compatibility alias."""

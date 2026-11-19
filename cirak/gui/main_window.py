@@ -163,10 +163,19 @@ class MainWindow(QMainWindow):
 
 
     def _poll_network_telemetry(self):
-        """Poll real network hardware status and update bars."""
-        active_iface = NetworkDetector.get_active_interface()
-        has_carrier = NetworkDetector.get_carrier(active_iface)
-        speed, _ = NetworkDetector.get_speed_duplex(active_iface)
+        """Poll real network hardware status (eth0 & wlan0) and update bars."""
+        eth_iface = "eth0"
+        for cand in ["eth0", "end0", "enp1s0"]:
+            if NetworkDetector.get_carrier(cand) or NetworkDetector.get_ip_address_cidr(cand):
+                eth_iface = cand
+                break
+        has_eth_carrier = NetworkDetector.get_carrier(eth_iface)
+        speed, _ = NetworkDetector.get_speed_duplex(eth_iface)
 
-        self.top_bar.update_eth_status(has_carrier, speed)
+        wlan_connected = NetworkDetector.get_carrier("wlan0") or bool(
+            NetworkDetector.get_ip_address_cidr("wlan0")
+        )
+
+        self.top_bar.update_eth_status(has_eth_carrier, speed)
+        self.top_bar.update_wifi_status(wlan_connected)
         self.bottom_bar.refresh_telemetry()

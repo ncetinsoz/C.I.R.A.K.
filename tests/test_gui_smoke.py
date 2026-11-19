@@ -55,6 +55,14 @@ def test_main_window_initialization(qapp):
 
     window.show_page("main")
     assert window.stack.currentWidget() == window.main_menu
+    window.telemetry_timer.stop()
+    window.top_bar.clock_timer.stop()
+    window.discovery_view._live_timer.stop()
+    window.settings_view.clock_timer.stop()
+    from PySide6.QtCore import QThreadPool
+    QThreadPool.globalInstance().waitForDone(3000)
+    qapp.processEvents()
+    window.close()
 
 
 def test_theme_toggle_smoke(qapp):
@@ -76,4 +84,13 @@ def test_theme_toggle_smoke(qapp):
     window.apply_theme()
     assert "#0f172a" in window.discovery_view.switch_panel.styleSheet()
     assert window.top_bar.power_btn is not None
+    assert window.top_bar.wifi_btn is not None
+    window.telemetry_timer.stop()
+    window.top_bar.clock_timer.stop()
+    window.discovery_view._live_timer.stop()
+    window.settings_view.clock_timer.stop()
+    from PySide6.QtCore import QThreadPool
+    QThreadPool.globalInstance().waitForDone(3000)
+    qapp.processEvents()
+    window.close()
 

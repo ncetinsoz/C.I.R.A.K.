@@ -52,11 +52,11 @@ class MainMenuView(QWidget):
         )
         self.btn_discovery.clicked.connect(lambda: self.navigate_requested.emit("discovery"))
 
-        # 3. Yetkisiz DHCP (Amber)
+        # 3. İleri Keşif (Amber)
         self.btn_rogue = MenuCard(
             icon_name="shield_alert",
-            title="Yetkisiz DHCP",
-            description="Rogue Avı & Switch Port Tespiti",
+            title="İleri Keşif",
+            description="Rogue DHCP, IP Çakışması & SNMP",
             accent_color="#f59e0b",
         )
         self.btn_rogue.clicked.connect(lambda: self.navigate_requested.emit("rogue"))

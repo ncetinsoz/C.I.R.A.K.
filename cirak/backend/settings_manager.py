@@ -46,6 +46,12 @@ class CirakSettings:
     ntp_enabled: bool = True
     theme: str = config.THEME_DARK
     profile_name: str = config.DEFAULT_PROFILE
+    snmp_community: str = "public"
+    wifi_ssid: str = "eduroam"
+    wifi_auth_mode: str = "eap"           # "eap" (802.1X eduroam), "psk" (WPA2/WPA3), "open"
+    wifi_eap_method: str = "ttls"         # "ttls" (DEÜ Varsayılan) or "peap"
+    wifi_phase2_auth: str = "pap"         # "pap" (DEÜ TTLS Varsayılan) or "mschapv2"
+    wifi_identity: str = ""               # e.g. ad.soyad@deu.edu.tr or ogrencino@ogr.deu.edu.tr
 
 
 class SettingsManager:

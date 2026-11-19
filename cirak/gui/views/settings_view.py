@@ -117,14 +117,16 @@ class TactileToggleButton(QPushButton):
 
 
 class TouchKeypadDialog(QDialog):
-    """On-screen touch keypad & full QWERTY keyboard for entering IP, CIDR, VLAN, MAC, or Hostname."""
+    """On-screen touch keypad & full QWERTY keyboard for entering IP, CIDR, VLAN, MAC, Hostname, Email, Password, or SNMP Community."""
 
     def __init__(self, title: str, initial_value: str, mode: str = "ip", parent: QWidget = None):
         super().__init__(parent)
         self.setWindowTitle(title)
-        self.mode = mode  # "ip", "vlan", "mac", "host"
-        if mode == "host":
-            self.setFixedSize(720, 390)
+        self.mode = mode  # "ip", "vlan", "mac", "host", "email", "password", "snmp"
+        self._upper = False
+        self._alpha_buttons = []
+        if mode in ("host", "email", "password", "snmp"):
+            self.setFixedSize(740, 405)
         elif mode == "mac":
             self.setFixedSize(560, 350)
         else:
@@ -187,11 +189,19 @@ class TouchKeypadDialog(QDialog):
         self.input_edit.setFixedHeight(36)
         layout.addWidget(self.input_edit)
 
-        if self.mode == "host":
-            # Quick preset chips for NTP / Hostnames
+        if self.mode in ("host", "email", "password", "snmp"):
             preset_row = QHBoxLayout()
             preset_row.setSpacing(6)
-            for preset in ("time.deu.edu.tr", "pool.ntp.org", "tr.pool.ntp.org", ".edu.tr", ".com"):
+            if self.mode == "email":
+                presets = ("@deu.edu.tr", "@ogr.deu.edu.tr", "eduroam", ".edu.tr")
+            elif self.mode == "snmp":
+                presets = ("public", "private", "deu-snmp", "campus-ro")
+            elif self.mode == "password":
+                presets = ("@", "!", "#", "$", "%", "&", "*", "?")
+            else:
+                presets = ("time.deu.edu.tr", "pool.ntp.org", "tr.pool.ntp.org", ".edu.tr", ".com")
+
+            for preset in presets:
                 p_btn = QPushButton(preset)
                 p_btn.setFixedHeight(28)
                 p_btn.setStyleSheet(
@@ -201,12 +211,12 @@ class TouchKeypadDialog(QDialog):
                 preset_row.addWidget(p_btn)
             layout.addLayout(preset_row)
 
-            # Full QWERTY + Number rows
+            # Full QWERTY + Numbers + Shift
             rows = [
-                ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "-", "⌫"],
-                ["q", "w", "e", "r", "t", "y", "u", "i", "o", "p", "_", "Temizle"],
-                ["a", "s", "d", "f", "g", "h", "j", "k", "l", ".", ":", "/"],
-                ["z", "x", "c", "v", "b", "n", "m", ".deu", ".tr", ".org"],
+                ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "-", "_", "⌫"],
+                ["q", "w", "e", "r", "t", "y", "u", "i", "o", "p", "@", "Temizle"],
+                ["a", "s", "d", "f", "g", "h", "j", "k", "l", ".", ":", "/", "!"],
+                ["⇧ HARF", "z", "x", "c", "v", "b", "n", "m", "#", "+", "="],
             ]
             for r_keys in rows:
                 r_layout = QHBoxLayout()
@@ -214,7 +224,13 @@ class TouchKeypadDialog(QDialog):
                 for k in r_keys:
                     btn = QPushButton(k)
                     btn.setFixedHeight(38)
-                    btn.clicked.connect(lambda checked=False, key=k: self._on_key(key))
+                    if k == "⇧ HARF":
+                        btn.clicked.connect(self._toggle_shift)
+                        self._shift_btn = btn
+                    else:
+                        if len(k) == 1 and k.isalpha():
+                            self._alpha_buttons.append(btn)
+                        btn.clicked.connect(lambda checked=False, b=btn: self._on_key(b.text()))
                     r_layout.addWidget(btn)
                 layout.addLayout(r_layout)
         else:
@@ -269,8 +285,13 @@ class TouchKeypadDialog(QDialog):
         bottom.addWidget(btn_ok, 2)
         layout.addLayout(bottom)
 
+    def _toggle_shift(self):
+        self._upper = not self._upper
+        for b in self._alpha_buttons:
+            b.setText(b.text().upper() if self._upper else b.text().lower())
+
     def _on_preset(self, val: str):
-        if val.startswith("."):
+        if val.startswith((".", "@")) or len(val) == 1:
             self.input_edit.setText(self.input_edit.text() + val)
         else:
             self.input_edit.setText(val)
@@ -287,7 +308,7 @@ class TouchKeypadDialog(QDialog):
             self.input_edit.setText(cur + key.lower() if self.mode == "mac" else cur + key)
 
     def _on_accept(self):
-        self.result_text = self.input_edit.text().strip()
+        self.result_text = self.input_edit.text().strip() if self.mode != "password" else self.input_edit.text()
         self.accept()
 
 
@@ -554,6 +575,11 @@ class SettingsView(QWidget):
         self.status_badge = QLabel("HAZIR")
         self.status_badge.setFont(QFont("DejaVu Sans Mono", 8, QFont.Bold))
 
+        self.btn_wifi_connect = QPushButton("📶 Wi-Fi Bağlan")
+        self.btn_wifi_connect.setFixedHeight(28)
+        self.btn_wifi_connect.setCursor(Qt.PointingHandCursor)
+        self.btn_wifi_connect.clicked.connect(self._open_wifi_connect_dialog)
+
         self.btn_sys_info = QPushButton("ℹ️ Sistem Özellikleri")
         self.btn_sys_info.setFixedHeight(28)
         self.btn_sys_info.setCursor(Qt.PointingHandCursor)
@@ -569,6 +595,7 @@ class SettingsView(QWidget):
         header.addWidget(self.title_lbl)
         header.addStretch()
         header.addWidget(self.status_badge)
+        header.addWidget(self.btn_wifi_connect)
         header.addWidget(self.btn_sys_info)
         header.addWidget(self.save_apply_btn)
 
@@ -825,6 +852,17 @@ class SettingsView(QWidget):
             border-radius: 4px;
             padding: 2px 6px;
         """)
+        self.btn_wifi_connect.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {'#083344' if is_dark else '#e0f2fe'};
+                color: {colors['accent_cyan']};
+                border: 1.5px solid {colors['accent_cyan']};
+                border-radius: 6px;
+                padding: 2px 8px;
+                font-size: 10px;
+                font-weight: 800;
+            }}
+        """)
         self.btn_sys_info.setStyleSheet(f"""
             QPushButton {{
                 background-color: {'#1e1b4b' if is_dark else '#e0e7ff'};
@@ -893,6 +931,11 @@ class SettingsView(QWidget):
         dlg = TouchKeypadDialog(title=title, initial_value=line_edit.text(), mode=mode, parent=self)
         if dlg.exec() == QDialog.Accepted:
             line_edit.setText(dlg.result_text)
+
+    def _open_wifi_connect_dialog(self):
+        from cirak.gui.dialogs.wifi_connect_dialog import WiFiConnectDialog
+        dlg = WiFiConnectDialog(parent=self.window())
+        dlg.exec()
 
     def _open_system_info_dialog(self):
         dlg = SystemInfoDialog(manager=self.manager, parent=self)

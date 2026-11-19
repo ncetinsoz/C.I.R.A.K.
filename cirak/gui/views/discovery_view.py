@@ -175,12 +175,18 @@ class DiscoveryView(QWidget):
 
         # Switch Panel Header
         sw_hdr = QHBoxLayout()
-        self.lbl_sw_title = QLabel("🔍 BAĞLI AĞ ANAHTARLAMA CİHAZI (SWITCH)")
+        self.lbl_sw_title = QLabel("🔍 BAĞLI AĞ ANAHTARLAMA CİHAZI (SWITCH / AP)")
 
         self.proto_badge = QLabel("DİNLENİYOR")
         self.proto_badge.setFont(QFont("DejaVu Sans Mono", 9, QFont.Bold))
 
-        self.btn_read_lldp = QPushButton("🔍 CDP / LLDP Paketlerini Dinle")
+        self.btn_snmp_inspect = QPushButton("📊 SNMP ile İncele")
+        self.btn_snmp_inspect.setFixedHeight(28)
+        self.btn_snmp_inspect.setCursor(Qt.PointingHandCursor)
+        self.btn_snmp_inspect.setToolTip("SNMP Comm String ile Switch Port Durumlarını ve Sıcaklığı İncele")
+        self.btn_snmp_inspect.clicked.connect(self._open_snmp_dialog)
+
+        self.btn_read_lldp = QPushButton("🔍 CDP / LLDP Dinle")
         self.btn_read_lldp.setProperty("class", "PrimaryBtn")
         self.btn_read_lldp.setFixedHeight(28)
         self.btn_read_lldp.setCursor(Qt.PointingHandCursor)
@@ -189,6 +195,7 @@ class DiscoveryView(QWidget):
         sw_hdr.addWidget(self.lbl_sw_title)
         sw_hdr.addStretch()
         sw_hdr.addWidget(self.proto_badge)
+        sw_hdr.addWidget(self.btn_snmp_inspect)
         sw_hdr.addWidget(self.btn_read_lldp)
         sw_layout.addLayout(sw_hdr)
 
@@ -344,6 +351,22 @@ class DiscoveryView(QWidget):
         self.lbl_sw_title.setStyleSheet(f"font-weight: 900; color: {colors['accent_indigo']}; font-size: 12px;")
         self.sw_div.setStyleSheet(f"background-color: {border_col}; max-height: 1px;")
 
+        self.btn_snmp_inspect.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {'#1e1b4b' if is_dark else '#e0e7ff'};
+                color: {colors['accent_indigo']};
+                border: 1.5px solid {colors['accent_indigo']};
+                border-radius: 6px;
+                padding: 2px 10px;
+                font-size: 11px;
+                font-weight: 800;
+            }}
+            QPushButton:pressed {{
+                background-color: {colors['accent_indigo']};
+                color: #ffffff;
+            }}
+        """)
+
         for kl in self._key_labels:
             kl.setStyleSheet(f"color: {text_mut}; font-size: 10px; font-weight: 700;")
 
@@ -375,6 +398,14 @@ class DiscoveryView(QWidget):
                 padding: 2px 8px;
             """)
             self.lbl_sw_Diagnostic.setStyleSheet(f"color: {text_sec}; font-size: 10px; font-family: monospace;")
+
+    def _open_snmp_dialog(self):
+        """Open touch-optimized SNMP Switch Port & Sensor Inspector modal."""
+        from cirak.gui.dialogs.snmp_switch_dialog import SwitchSNMPDialog
+        raw_ip = self.val_sw_mgmt.text().strip()
+        target_ip = raw_ip if ("." in raw_ip and not raw_ip.startswith("-")) else ""
+        dlg = SwitchSNMPDialog(initial_ip=target_ip, parent=self.window())
+        dlg.exec()
 
     def _on_slider_changed(self, value: int):
         colors = ThemeManager.get_colors()
@@ -444,7 +475,7 @@ class DiscoveryView(QWidget):
 
     def _run_lldp_query(self):
         """Run active CDP/LLDP/NAC/L2 capture on background worker thread."""
-        self.btn_read_lldp.setText("Dinleniyor (CDP/LLDP/L2)...")
+        self.btn_read_lldp.setText("Dinleniyor...")
         self.btn_read_lldp.setEnabled(False)
         self.proto_badge.setText("PAKET BEKLENİYOR")
 
@@ -458,12 +489,12 @@ class DiscoveryView(QWidget):
         QThreadPool.globalInstance().start(self._lldp_worker)
 
     def _on_lldp_finished(self, res: TestResult):
-        self.btn_read_lldp.setText("🔍 CDP / LLDP Paketlerini Dinle")
+        self.btn_read_lldp.setText("🔍 CDP / LLDP Dinle")
         self.btn_read_lldp.setEnabled(True)
         self._populate_switch_panel(res.details)
 
     def _on_lldp_error(self, err_tuple):
-        self.btn_read_lldp.setText("🔍 CDP / LLDP Paketlerini Dinle")
+        self.btn_read_lldp.setText("🔍 CDP / LLDP Dinle")
         self.btn_read_lldp.setEnabled(True)
         self.proto_badge.setText("HATA")
 
@@ -510,7 +541,22 @@ class DiscoveryView(QWidget):
             mac_str = str(d.get("chassis_id") or "--")
             self.val_sw_mac.setText(f"{mac_str} ({vendor_str})" if vendor_str else mac_str)
 
-            if "L2-ARP" in proto:
+            if "Wi-Fi AP" in proto:
+                bg = "#083344" if is_dark else "#e0f2fe"
+                fg = colors["accent_cyan"]
+                self.proto_badge.setText(f"📶 KABLOSUZ AP ({vendor_str})")
+                self.proto_badge.setStyleSheet(f"""
+                    background-color: {bg};
+                    color: {fg};
+                    border: 1px solid {fg};
+                    border-radius: 4px;
+                    padding: 2px 8px;
+                """)
+                self.lbl_sw_Diagnostic.setText(
+                    f"📶 Kablosuz Erişim Noktası (AP - {vendor_str}) üzerinden bağlantı aktif. Tüm L1-L7, Hız ve İleri Keşif testleri wlan0 üzerinden çalıştırılabilir."
+                )
+                self.lbl_sw_Diagnostic.setStyleSheet(f"color: {fg}; font-size: 10px; font-weight: bold;")
+            elif "L2-ARP" in proto:
                 bg = "#451a03" if is_dark else "#fef3c7"
                 fg = colors["status_warning"] if is_unauth else colors["accent_cyan"]
                 badge_txt = f"✓ SOHO ROUTER / SWITCH ({vendor_str})" if is_unauth else f"✓ {proto} KEŞİF"

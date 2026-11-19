@@ -36,9 +36,22 @@ class PhysicalLinkTest(BaseTest):
         carrier = NetworkDetector.get_carrier(self.interface)
         speed, duplex = NetworkDetector.get_speed_duplex(self.interface)
         rx_b, tx_b, rx_p, tx_p = NetworkDetector.get_packet_stats(self.interface)
+        mdix_str = "Düz Bağlantı (MDIX)" if carrier else "Bağlantı Yok"
 
-        # In case eth0 speed is 0 because carrier negotiation is in progress
-        if carrier and speed == 0:
+        if self.interface.startswith("wlan"):
+            from cirak.backend.wifi_scanner import WiFiScanner
+            ap_info = WiFiScanner(interface=self.interface, simulate=self.simulate).get_active_ap_telemetry()
+            if ap_info:
+                carrier = True
+                speed = int(ap_info.get("bitrate_mbps", "300") or 300)
+                duplex = f"Wi-Fi {ap_info.get('channel', '802.11')}"
+                mdix_str = f"SSID: {ap_info.get('ssid')} ({ap_info.get('signal_dbm')} dBm)"
+            elif carrier:
+                speed = speed or 144
+                duplex = "Wi-Fi 802.11"
+                mdix_str = "Kablosuz Bağlantı (wlan0)"
+        elif carrier and speed == 0:
+            # In case eth0 speed is 0 because carrier negotiation is in progress
             speed = 1000
             duplex = "Full Duplex"
 
@@ -46,7 +59,7 @@ class PhysicalLinkTest(BaseTest):
             connected=carrier,
             speed_mbps=speed,
             duplex=duplex,
-            mdix="Düz Bağlantı (MDIX)" if carrier else "Bağlantı Yok",
+            mdix=mdix_str,
             carrier=carrier,
             rx_bytes=rx_b,
             tx_bytes=tx_b,
